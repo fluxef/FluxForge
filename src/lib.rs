@@ -8,12 +8,13 @@ use async_trait::async_trait; // Empfohlen für asynchrone Traits
 pub use crate::core::{ForgeSchema, ForgeTable, ForgeColumn};
 use futures::Stream;
 use std::pin::Pin;
+use crate::core::ForgeConfig;
 
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
     // ... fetch_schema, apply_schema ...
     // Liest das gesamte Schema ein
-    async fn fetch_schema(&self) -> Result<ForgeSchema, Box<dyn std::error::Error>>;
+    async fn fetch_schema(&self, config: &ForgeConfig) -> Result<ForgeSchema, Box<dyn std::error::Error>>;
 
     // Schreibt die Struktur (wichtig für Migrate/Dry-Run)
     async fn apply_schema(&self, schema: &ForgeSchema, dry_run: bool) -> Result<Vec<String>, Box<dyn std::error::Error>>;

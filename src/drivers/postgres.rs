@@ -1,10 +1,9 @@
-use crate::core::ForgeSchema;
+use crate::core::{ForgeConfig, ForgeSchema};
 use crate::DatabaseDriver;
 use async_trait::async_trait;
-use sqlx::{Executor, PgPool};
-use std::io::Write;
+use sqlx::{PgPool, Row, Column};
 use std::pin::Pin;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 
 pub struct PostgresDriver {
     pub pool: PgPool,
@@ -12,7 +11,7 @@ pub struct PostgresDriver {
 
 #[async_trait]
 impl DatabaseDriver for PostgresDriver {
-    async fn fetch_schema(&self) -> Result<ForgeSchema, Box<dyn std::error::Error>> {
+    async fn fetch_schema(&self, config: &ForgeConfig) -> Result<ForgeSchema, Box<dyn std::error::Error>>{
         unimplemented!("Postgres kann auch Quelle sein, Fokus liegt aber auf Target")
     }
 
@@ -111,19 +110,23 @@ impl DatabaseDriver for PostgresDriver {
         // Postgres nutzt Double-Quotes für Case-Sensitivity Schutz
         let query = format!("SELECT * FROM \"{}\"", table_name);
 
-        let stream = sqlx::query(&query).fetch(&self.pool).map(|row_result| {
-            row_result.map(|row| {
-                let mut map = serde_json::Map::new();
-                for col in row.columns() {
-                    let name = col.name();
-                    let val: serde_json::Value =
-                        row.try_get(name).unwrap_or(serde_json::Value::Null);
-                    map.insert(name.to_string(), val);
-                }
-                serde_json::Value::Object(map)
+        let stream = sqlx::query(&query)
+            .fetch(&self.pool)
+            .map(|row_result| {
+                row_result.map(|row: sqlx::postgres::PgRow| {
+                    let mut map = serde_json::Map::new();
+                    for col in row.columns() {
+                        let name = col.name();
+                        let val: serde_json::Value =
+                            row.try_get(name).unwrap_or(serde_json::Value::Null);
+                        map.insert(name.to_string(), val);
+                    }
+                    serde_json::Value::Object(map)
+                })
             })
-        });
+            .collect::<Vec<_>>()
+            .await;
 
-        Ok(Box::pin(stream))
+        Ok(Box::pin(futures::stream::iter(stream)))
     }
 }

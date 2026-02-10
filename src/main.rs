@@ -8,7 +8,7 @@ use cli::Cli;
 async fn main() {
     let args = Cli::parse();
 
-    if let Err(e) = business::handle_command(args.command).await {
+    if let Err(e) = business::handle_command(args.command, args.verbose).await {
         eprintln!("❌ Error: {}", e);
         std::process::exit(1);
     }

@@ -8,8 +8,9 @@ pub struct Cli {
     pub command: Commands,
 
     /// Verbose output
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    pub verbose: u8,
+    #[arg(long, short = 'v', global = true)]
+    pub verbose: bool,
+
 }
 
 #[derive(Subcommand)]

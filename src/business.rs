@@ -1,26 +1,61 @@
-use std::path::PathBuf;
 use crate::cli::Commands;
+use fluxforge::{drivers, DatabaseDriver, ForgeSchema};
 use futures::StreamExt;
-use fluxforge::{DatabaseDriver, ForgeSchema};
+use fluxforge::config::load_config;
 
-pub async fn handle_command(command: Commands) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn handle_command(command: Commands, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        Commands::Extract { source, schema, config } => {
-            println!("🛠 Extracting schema from {} into {:?}", source, schema);
-            // Quell-Treiber (kann MySQL oder Postgres sein)
-            if let Some(src_url) = source {
-                let source_driver = drivers::create_driver(&src_url).await?;
+        Commands::Extract {
+            source,
+            schema,
+            config,
+        } => {
+            println!("Extracting schema from {}...", source);
 
-                let schema = source_driver.fetch_schema().await?;
-                // ausgabe des schema in interne json struct datei
-
+            // 1. Konfiguration laden (Nutzt Standard, wenn keine Datei angegeben)
+            // Wir nutzen hier die Logik mit include_str!, die wir besprochen hatten
+            let forge_config = load_config(config);
+            if verbose {
+                println!(
+                    "Configuration loaded (using Mappings for {} types)",
+                    forge_config.types.len()
+                );
             }
-            Ok(())
 
+            // 2. Quell-Treiber instanziieren
+            let source_driver = drivers::create_driver(&source).await?;
+
+            // 3. Schema extrahieren
+            // Der Driver sollte intern die forge_config nutzen, um Typen zu normalisieren
+            let extracted_schema = source_driver.fetch_schema(&forge_config).await?;
+
+            if verbose {
+                println!(
+                    "📊 Extracted {} tables from source.",
+                    extracted_schema.tables.len()
+                );
+            }
+
+            // 4. In JSON-Datei schreiben
+            // Wir nutzen serde_json mit "pretty print", damit die Datei lesbar bleibt
+            let file = std::fs::File::create(&schema)?;
+            serde_json::to_writer_pretty(file, &extracted_schema)?;
+
+            println!("💾 Schema successfully forged and saved to: {:?}", schema);
+
+            Ok(())
         }
-        Commands::Migrate { source, schema, target, config, dry_run, schema_only } => {
+
+        Commands::Migrate {
+            source,
+            schema,
+            target,
+            config: _,
+            dry_run,
+            schema_only,
+        } => {
             // 1. Get Schema (from File OR Source)
-            let internal_schema = if let Some(path) = schema {
+            let _internal_schema = if let Some(path) = schema {
                 println!("📖 Loading schema from file: {:?}", path);
                 // Load from JSON logic
             } else {
@@ -81,9 +116,8 @@ pub async fn handle_command(command: Commands) -> Result<(), Box<dyn std::error:
 pub async fn migrate_data(
     source: &dyn DatabaseDriver,
     target: &dyn DatabaseDriver,
-    schema: &ForgeSchema
+    schema: &ForgeSchema,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
     for table in &schema.tables {
         println!("🚚 Transferring table: {}", table.name);
 

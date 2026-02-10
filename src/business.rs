@@ -69,6 +69,7 @@ pub async fn handle_command(
             let forge_config = load_config(config.clone());
 
             // 2. Schema beschaffen & Modus festlegen
+            let mut source_driver = None;
             let (mut schema, can_migrate_data) = if let Some(path) = schema {
                 // --- Datei-Modus ---
                 let file = std::fs::File::open(&path)
@@ -81,8 +82,9 @@ pub async fn handle_command(
             } else {
                 // --- Live-Modus ---
                 let src_url = source.as_ref().unwrap(); // Durch Clap-Gruppe garantiert vorhanden
-                let source_driver = drivers::create_driver(src_url).await?;
-                let int_schema = source_driver.fetch_schema(&forge_config).await?;
+                let s_driver = drivers::create_driver(src_url).await?;
+                let int_schema = s_driver.fetch_schema(&forge_config).await?;
+                source_driver = Some(s_driver);
 
                 // Hier ist eine Datenmigration theoretisch möglich
                 (int_schema, true)
@@ -107,9 +109,10 @@ pub async fn handle_command(
                 // Wenn leer, dann Struktur anlegen und Daten schieben
                 target_driver.apply_schema(&schema, !dry_run).await?;
                 if !dry_run {
-                    migrate_data(source_driver.as_ref(), target_driver.as_ref(), &schema, verbose).await?;
+                    if let Some(s_driver) = source_driver {
+                        migrate_data(s_driver.as_ref(), target_driver.as_ref(), &schema, verbose).await?;
+                    }
                 }
-
             } else {
                 // FALL B: Nur Struktur-Anpassung (--schema-only oder Datei-Modus)
                 println!("🔄 Modus: Struktur-Anpassung (In-Place Evolution).");
@@ -122,9 +125,9 @@ pub async fn handle_command(
                     println!("📝 --- DRY RUN: Geplante Strukturänderungen ---");
                     for sql in statements { println!("{}", sql); }
                 }
+            }
 
             Ok(())
-
         }
     }
 }

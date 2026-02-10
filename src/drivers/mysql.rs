@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::error::Error;
 use crate::core::{ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeSchema, ForgeTable, SchemaMetadata};
 use crate::{DatabaseDriver, ForgeColumn};
 use async_trait::async_trait;
@@ -86,6 +87,10 @@ impl MySqlDriver {
 
 #[async_trait]
 impl DatabaseDriver for MySqlDriver {
+    async fn has_data(&self, schema: &ForgeSchema) -> Result<bool, Box<dyn Error>> {
+        todo!()
+    }
+
     async fn fetch_schema(
         &self,
         config: &ForgeConfig,

@@ -95,28 +95,33 @@ pub async fn handle_command(
 
             // 4. Ziel-Treiber vorbereiten und Struktur anwenden
             let target_driver = drivers::create_driver(&target).await?;
-            let statements = target_driver.apply_schema(&schema, !dry_run).await?;
 
-            // 5. Output für Dry-Run
-            if dry_run {
-                println!("📝 --- DRY RUN: Generierte SQL-Statements ---");
-                for sql in statements {
-                    println!("{}\n", sql);
+            if !schema_only && can_migrate_data {
+                // FALL A: Struktur + Datenmigration
+                println!("🛡️ Sicherheitscheck: Prüfe Ziel-Datenbank auf vorhandene Daten...");
+                if target_driver.has_data(&schema).await? {
+                    return Err("❌ ABBRUCH: Die Zieldatenbank enthält bereits Daten. \
+                    Um Datenverlust zu vermeiden, führt FluxForge keine Migration in nicht-leere Datenbanken durch.".into());
                 }
-            }
 
-            // 6. Datenmigration (nur im Live-Modus und wenn nicht schema_only)
-            if can_migrate_data && !schema_only && !dry_run {
-                println!("🚚 Starte Datentransfer von der Live-Quelle...");
-                migrate_data(
-                    drivers::create_driver(source.as_ref().unwrap()).await?.as_ref(),
-                    target_driver.as_ref(),
-                    &schema,
-                    verbose
-                ).await?;
-            } else if !can_migrate_data && !schema_only {
-                println!("ℹ️ Hinweis: Datentransfer übersprungen, da nur ein Datei-Schema (--schema) vorliegt.");
-            }
+                // Wenn leer, dann Struktur anlegen und Daten schieben
+                target_driver.apply_schema(&schema, !dry_run).await?;
+                if !dry_run {
+                    migrate_data(source_driver.as_ref(), target_driver.as_ref(), &schema, verbose).await?;
+                }
+
+            } else {
+                // FALL B: Nur Struktur-Anpassung (--schema-only oder Datei-Modus)
+                println!("🔄 Modus: Struktur-Anpassung (In-Place Evolution).");
+
+                // Hier rufen wir apply_schema auf.
+                // Der Postgres-Driver muss hier intern erkennen, ob er CREATE oder ALTER nutzt.
+                let statements = target_driver.apply_schema(&schema, !dry_run).await?;
+
+                if dry_run {
+                    println!("📝 --- DRY RUN: Geplante Strukturänderungen ---");
+                    for sql in statements { println!("{}", sql); }
+                }
 
             Ok(())
 

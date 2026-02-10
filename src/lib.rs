@@ -12,6 +12,9 @@ use std::pin::Pin;
 
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
+    /// Prüft, ob in den Tabellen des Schemas bereits Daten im Ziel existieren.
+    async fn has_data(&self, schema: &ForgeSchema) -> Result<bool, Box<dyn std::error::Error>>;
+
     // ... fetch_schema, apply_schema ...
     // Liest das gesamte Schema ein
     async fn fetch_schema(

@@ -138,7 +138,7 @@ impl PostgresDriver {
 #[async_trait]
 impl DatabaseDriver for PostgresDriver {
     async fn fetch_schema(&self, config: &ForgeConfig) -> Result<ForgeSchema, Box<dyn std::error::Error>>{
-        unimplemented!("Postgres kann auch Quelle sein, Fokus liegt aber auf Target")
+        todo!("Postgres kann auch Quelle sein, Fokus liegt aber auf Target")
     }
 
     async fn apply_schema(&self, schema: &ForgeSchema, execute: bool)
@@ -284,4 +284,23 @@ impl DatabaseDriver for PostgresDriver {
 
         Ok(Box::pin(futures::stream::iter(stream)))
     }
+    async fn has_data(&self, schema: &ForgeSchema) -> Result<bool, Box<dyn std::error::Error>> {
+        for table in &schema.tables {
+            // Prüfen, ob die Tabelle überhaupt existiert
+            let table_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)"
+            )
+                .bind(&table.name)
+                .fetch_one(&self.pool).await?;
+
+            if table_exists {
+                // Wenn sie existiert, prüfen ob Zeilen drin sind
+                let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{}\"", table.name))
+                    .fetch_one(&self.pool).await?;
+                if count > 0 { return Ok(true); }
+            }
+        }
+        Ok(false)
+    }
+
 }

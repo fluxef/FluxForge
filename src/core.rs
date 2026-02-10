@@ -65,6 +65,7 @@ pub struct ForgeColumn {
     pub auto_increment: bool,
     pub default: Option<String>,
     pub comment: Option<String>,
+    pub enum_values: Option<Vec<String>>, // Speichert ["active", "inactive", etc.]
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

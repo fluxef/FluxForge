@@ -156,6 +156,7 @@ impl DatabaseDriver for MySqlDriver {
                     auto_increment: c_row.get::<String, _>("extra").contains("auto_increment"),
                     default: c_row.get("column_default"),
                     comment: c_row.get("column_comment"),
+                    enum_values: None,
                 });
             }
 

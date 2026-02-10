@@ -63,117 +63,73 @@ pub async fn handle_command(
             schema_only,
         } => {
 
-            // 1. Konfiguration vorab laden (für Mappings)
+            // In src/business.rs -> match command { Commands::Migrate { ... } }
+
+            // 1. Konfiguration laden
             let forge_config = load_config(config.clone());
 
-            // 2. Schema-Daten beschaffen (aus Datei ODER Live-DB)
-            let mut schema = if let Some(path) = schema {
-                // --- Szenario: Laden aus JSON-Datei ---
-                println!("📖 Reading schema snapshot from: {:?}", path);
-
+            // 2. Schema beschaffen & Modus festlegen
+            let (mut schema, can_migrate_data) = if let Some(path) = schema {
+                // --- Datei-Modus ---
                 let file = std::fs::File::open(&path)
-                    .map_err(|e| format!("Failed to open schema file {:?}: {}", path, e))?;
+                    .map_err(|e| format!("Fehler beim Öffnen der Schema-Datei {:?}: {}", path, e))?;
+                let int_schema: ForgeSchema = serde_json::from_reader(std::io::BufReader::new(file))
+                    .map_err(|e| format!("Fehler beim Parsen der JSON-Datei: {}", e))?;
 
-                let reader = std::io::BufReader::new(file);
-
-                // Deserialisierung des JSON in unser ForgeSchema Struct
-                let int_schema: ForgeSchema = serde_json::from_reader(reader)
-                    .map_err(|e| format!("Failed to parse JSON schema from {:?}: {}", path, e))?;
-
-                println!("✅ Snapshot loaded (Source: {}, Version: {})",
-                         int_schema.metadata.source_system,
-                         int_schema.metadata.forge_version
-                );
-
-                int_schema
+                // In diesem Modus können keine Daten migriert werden
+                (int_schema, false)
             } else {
-                // --- Szenario: Extraktion aus Live-DB ---
-                let src_url = source.as_ref().ok_or("No source URL or schema file provided")?;
-                println!("🔍 Analyzing live database structure: {}", src_url);
-
+                // --- Live-Modus ---
+                let src_url = source.as_ref().unwrap(); // Durch Clap-Gruppe garantiert vorhanden
                 let source_driver = drivers::create_driver(src_url).await?;
                 let int_schema = source_driver.fetch_schema(&forge_config).await?;
 
-                println!("✅ Live schema extracted ({} tables found)", int_schema.tables.len());
-
-                int_schema
+                // Hier ist eine Datenmigration theoretisch möglich
+                (int_schema, true)
             };
 
+            // 3. Tabellen sortieren (Abhängigkeiten auflösen)
+            sort_tables_by_dependencies(&schema)
+                .map(|sorted| schema.tables = sorted)
+                .map_err(|e| format!("Abhängigkeitsfehler: {}", e))?;
 
-            println!("🔍 Analyzing and sorting table dependencies...");
-            match sort_tables_by_dependencies(&schema) {
-                Ok(sorted) => schema.tables = sorted,
-                Err(e) => return Err(e.into()),
-            }
-
+            // 4. Ziel-Treiber vorbereiten und Struktur anwenden
             let target_driver = drivers::create_driver(&target).await?;
-
-            // Jetzt erst apply_schema aufrufen (Postgres freut sich über die Reihenfolge)
-
-            // Wenn dry_run == true, wird execute auf false gesetzt.
             let statements = target_driver.apply_schema(&schema, !dry_run).await?;
 
+            // 5. Output für Dry-Run
             if dry_run {
-                println!("📝 --- DRY RUN: Generated SQL Statements ---");
+                println!("📝 --- DRY RUN: Generierte SQL-Statements ---");
                 for sql in statements {
                     println!("{}\n", sql);
                 }
-                println!("📝 --- End of dry run. No changes were made. ---");
-            } else {
-                println!("🚀 Schema successfully applied to target.");
             }
 
-
-            /* TODO
-            // 3. Data Migration (Only if Source is present AND not schema_only)
-            if !schema_only && !dry_run {
-                if let Some(src_url) = source {
-                    println!("🚚 Transferring data: {} -> {}", src_url, target);
-                    // stream_data(src_url, target)
-                } else {
-                    println!("⚠️ Skipping data migration: No live --source provided.");
-                }
-            } else if schema_only {
-                println!("ℹ️ Skipping data migration (--schema-only)");
+            // 6. Datenmigration (nur im Live-Modus und wenn nicht schema_only)
+            if can_migrate_data && !schema_only && !dry_run {
+                println!("🚚 Starte Datentransfer von der Live-Quelle...");
+                migrate_data(
+                    drivers::create_driver(source.as_ref().unwrap()).await?.as_ref(),
+                    target_driver.as_ref(),
+                    &schema,
+                    verbose
+                ).await?;
+            } else if !can_migrate_data && !schema_only {
+                println!("ℹ️ Hinweis: Datentransfer übersprungen, da nur ein Datei-Schema (--schema) vorliegt.");
             }
-            */
 
             Ok(())
+
         }
     }
 }
-
-/*
-
-pub async fn handle_command(command: Commands) -> Result<(), Box<dyn std::error::Error>> {
-    match command {
-        Commands::Migrate { source, target, .. } => {
-            // Ziel-Treiber (immer Postgres laut deiner Anforderung)
-            let target_driver = drivers::create_driver(&target).await?;
-
-            // Quell-Treiber (kann MySQL oder Postgres sein)
-            if let Some(src_url) = source {
-                let source_driver = drivers::create_driver(&src_url).await?;
-
-                let schema = source_driver.fetch_schema().await?;
-                target_driver.apply_schema(&schema, false).await?;
-                // ... Datenmigration ...
-            }
-            Ok(())
-        }
-        // ... andere Commands ...
-    }
-}
-*/
-
-
 
 
 pub async fn migrate_data(
     source: &dyn DatabaseDriver,
     target: &dyn DatabaseDriver,
     schema: &ForgeSchema,
-    verbose: u8,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let multi = MultiProgress::new();
 

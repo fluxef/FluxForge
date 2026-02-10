@@ -1,5 +1,5 @@
-use crate::core::{ForgeConfig, ForgeSchema};
-use crate::DatabaseDriver;
+use crate::core::{ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeSchema};
+use crate::{DatabaseDriver, ForgeColumn, ForgeTable};
 use async_trait::async_trait;
 use sqlx::{PgPool, Row, Column};
 use std::pin::Pin;
@@ -9,33 +9,188 @@ pub struct PostgresDriver {
     pub pool: PgPool,
 }
 
+impl PostgresDriver {
+    /// Erzeugt das CREATE TABLE Statement inkl. Columns, PKs und Defaults
+
+    fn build_create_table_sql(&self, table: &ForgeTable) -> String {
+        let mut column_definitions = Vec::new();
+        let mut primary_keys = Vec::new();
+
+        for col in &table.columns {
+            let mut def = format!("  \"{}\" {}", col.name, col.data_type);
+
+            // Default Werte behandeln
+            if let Some(default_val) = &col.default {
+                // MySQL nutzt oft 'CURRENT_TIMESTAMP' - Postgres versteht das auch,
+                // aber andere Defaults müssen evtl. in Quotes
+                if default_val.to_uppercase() == "CURRENT_TIMESTAMP" {
+                    def.push_str(" DEFAULT CURRENT_TIMESTAMP");
+                } else {
+                    def.push_str(&format!(" DEFAULT '{}'", default_val));
+                }
+            }
+
+            // Nullability
+            if !col.is_nullable {
+                def.push_str(" NOT NULL");
+            }
+
+            column_definitions.push(def);
+
+            if col.is_primary_key {
+                primary_keys.push(format!("\"{}\"", col.name));
+            }
+        }
+
+        // Primary Key Constraint am Ende der Spaltenliste hinzufügen
+        if !primary_keys.is_empty() {
+            column_definitions.push(format!("  PRIMARY KEY ({})", primary_keys.join(", ")));
+        }
+
+        format!(
+            "CREATE TABLE IF NOT EXISTS \"{}\" (\n{}\n);",
+            table.name,
+            column_definitions.join(",\n")
+        )
+    }
+
+    /// Erzeugt den Index-String
+    fn build_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
+        let unique = if index.is_unique { "UNIQUE " } else { "" };
+        let cols = index.columns.iter()
+            .map(|c| format!("\"{}\"", c))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!(
+            "CREATE {}INDEX IF NOT EXISTS \"{}\" ON \"{}\" ({});",
+            unique, index.name, table_name, cols
+        )
+    }
+
+    /// Erzeugt das Foreign Key Alter Table Statement
+    fn build_create_fk_sql(&self, table_name: &str, fk: &ForgeForeignKey) -> String {
+        let mut sql = format!(
+            "ALTER TABLE \"{}\" ADD CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\" (\"{}\")",
+            table_name, fk.name, fk.column, fk.ref_table, fk.ref_column
+        );
+
+        if let Some(on_delete) = &fk.on_delete {
+            sql.push_str(&format!(" ON DELETE {}", on_delete));
+        }
+
+        sql.push(';');
+        sql
+    }
+
+    /// Generiert CREATE TYPE Statements für Enums
+    /// Generiert CREATE TYPE Statements für MySQL-Enums in Postgres.
+    /// Nutzt einen PL/pgSQL Block, um Fehler zu vermeiden, falls der Typ schon existiert.
+    fn build_enum_types_sql(&self, table: &ForgeTable) -> Vec<String> {
+        let mut statements = Vec::new();
+
+        for col in &table.columns {
+            // Prüfen, ob enum_values vorhanden und nicht leer sind
+            if let Some(values) = &col.enum_values {
+                if !values.is_empty() {
+                    // Eindeutiger Name für den Enum-Typ in Postgres
+                    // Format: t_tabellenname_spaltenname
+                    let type_name = format!("t_{}_{}", table.name, col.name).to_lowercase();
+
+                    // Die Werte in Single-Quotes fassen und mit Komma trennen
+                    let vals = values.iter()
+                        .map(|v| format!("'{}'", v.replace('\'', "''"))) // Einfache Quotes escapen
+                        .collect::<Vec<String>>()
+                        .join(", ");
+
+                    // PL/pgSQL Block: Erstellt den Typ nur, wenn er noch nicht existiert
+                    let sql = format!(
+                        "DO $$ \
+                        BEGIN \
+                            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{type_name}') THEN \
+                                CREATE TYPE \"{type_name}\" AS ENUM ({vals}); \
+                            END IF; \
+                        END $$;",
+                        type_name = type_name,
+                        vals = vals
+                    );
+
+                    statements.push(sql);
+                }
+            }
+        }
+        statements
+    }
+
+    /// Modifizierte Spalten-Definition für Enums
+    fn get_pg_type(&self, table_name: &str, col: &ForgeColumn) -> String {
+        if col.enum_values.is_some() {
+            // Verweis auf den zuvor erstellten Typ
+            format!("\"t_{}_{}\"", table_name, col.name)
+        } else {
+            col.data_type.clone()
+        }
+    }
+
+}
+
+
 #[async_trait]
 impl DatabaseDriver for PostgresDriver {
     async fn fetch_schema(&self, config: &ForgeConfig) -> Result<ForgeSchema, Box<dyn std::error::Error>>{
         unimplemented!("Postgres kann auch Quelle sein, Fokus liegt aber auf Target")
     }
 
-    async fn apply_schema(
-        &self,
-        schema: &ForgeSchema,
-        dry_run: bool,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let mut sql_statements = Vec::new();
+    async fn apply_schema(&self, schema: &ForgeSchema, execute: bool)
+                          -> Result<Vec<String>, Box<dyn std::error::Error>>
+    {
+        let mut all_statements = Vec::new();
 
+        // PHASE 0: Custom Types (Enums)
         for table in &schema.tables {
-            // Sehr vereinfachtes Beispiel für DDL-Generierung
-            let mut sql = format!("CREATE TABLE IF NOT EXISTS {} (", table.name);
-            // ... Spalten-Logik hier ...
-            sql.push_str(");");
+            let enum_sqls = self.build_enum_types_sql(table);
+            for sql in enum_sqls {
+                all_statements.push(sql.clone());
+                if execute { sqlx::query(&sql).execute(&self.pool).await?; }
+            }
+        }
 
-            sql_statements.push(sql.clone());
 
-            if !dry_run {
+        // Schritt 1: Alle Tabellen erstellen (ohne FKs)
+        for table in &schema.tables {
+            let sql = self.build_create_table_sql(table);
+            all_statements.push(sql.clone());
+            if execute {
                 sqlx::query(&sql).execute(&self.pool).await?;
             }
         }
 
-        Ok(sql_statements)
+        // Schritt 2: Alle Indizes erstellen
+        for table in &schema.tables {
+            for index in &table.indices {
+                let sql = self.build_create_index_sql(&table.name, index);
+                all_statements.push(sql.clone());
+                if execute {
+                    sqlx::query(&sql).execute(&self.pool).await?;
+                }
+            }
+        }
+
+        // Schritt 3: Alle Foreign Keys per ALTER TABLE hinzufügen
+        for table in &schema.tables {
+            for fk in &table.foreign_keys {
+                let sql = self.build_create_fk_sql(&table.name, fk);
+                all_statements.push(sql.clone());
+                if execute {
+                    // Falls der FK schon existiert, könnte Postgres einen Fehler werfen.
+                    // Man kann 'IF NOT EXISTS' bei Constraints leider nicht nutzen,
+                    // daher ist ein try-catch oder Check sinnvoll.
+                    let _ = sqlx::query(&sql).execute(&self.pool).await;
+                }
+            }
+        }
+
+        Ok(all_statements)
     }
 
     async fn insert_chunk(

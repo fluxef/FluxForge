@@ -17,13 +17,13 @@ pub struct Cli {
 pub enum Commands {
     /// Extract schema into internal format
     Extract {
-        #[arg(short, long)]
+        #[arg(long)]
         source: String,
 
-        #[arg(short, long)]
+        #[arg(long)]
         schema: PathBuf,
 
-        #[arg(short, long)]
+        #[arg(long)]
         config: Option<PathBuf>,
     },
     /// Migrate structure and optionally data
@@ -34,18 +34,18 @@ pub enum Commands {
     ))]
     Migrate {
         /// MySQL source URL (required for data migration)
-        #[arg(short, long)]
+        #[arg(long)]
         source: Option<String>,
 
         /// Path to internal schema JSON file
-        #[arg(short, long)]
+        #[arg(long)]
         schema: Option<PathBuf>,
 
         /// PostgreSQL target URL
-        #[arg(short, long)]
+        #[arg(long)]
         target: String,
 
-        #[arg(short, long)]
+        #[arg(long)]
         config: Option<PathBuf>,
 
         /// Output SQL statements without executing them
@@ -55,5 +55,8 @@ pub enum Commands {
         /// Only migrate the structure, skip data transfer
         #[arg(long)]
         schema_only: bool,
+
+        #[arg(long)]
+        allow_destructive: bool,
     },
 }

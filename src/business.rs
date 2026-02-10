@@ -2,11 +2,10 @@ use crate::cli::Commands;
 use fluxforge::config::load_config;
 use fluxforge::{drivers, DatabaseDriver, ForgeSchema, ForgeTable};
 use futures::StreamExt;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use petgraph::algo::toposort;
 use petgraph::graph::DiGraph;
 use std::collections::HashMap;
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
-use std::time::Duration;
 
 pub async fn handle_command(
     command: Commands,
@@ -61,6 +60,7 @@ pub async fn handle_command(
             config,
             dry_run,
             schema_only,
+            allow_destructive,
         } => {
 
             // In src/business.rs -> match command { Commands::Migrate { ... } }

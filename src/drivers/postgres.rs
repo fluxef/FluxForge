@@ -1,3 +1,4 @@
+use std::error::Error;
 use crate::core::{ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeSchema};
 use crate::{DatabaseDriver, ForgeColumn, ForgeTable};
 use async_trait::async_trait;
@@ -303,4 +304,7 @@ impl DatabaseDriver for PostgresDriver {
         Ok(false)
     }
 
+    async fn diff_schema(&self, schema: &ForgeSchema, config: &ForgeConfig, execute: bool, destructive: bool) -> Result<Vec<String>, Box<dyn Error>> {
+        todo!()
+    }
 }

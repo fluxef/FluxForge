@@ -1,10 +1,12 @@
-use std::collections::HashMap;
-use std::error::Error;
-use crate::core::{ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeSchema, ForgeTable, SchemaMetadata};
+use crate::core::{
+    ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeSchema, ForgeTable, SchemaMetadata,
+};
 use crate::{DatabaseDriver, ForgeColumn};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use sqlx::{Column, MySqlPool, Row};
+use std::collections::HashMap;
+use std::error::Error;
 use std::pin::Pin;
 
 pub struct MySqlDriver {
@@ -28,7 +30,9 @@ impl MySqlDriver {
             let table_name = self.get_string_at_index(&row, 0).unwrap_or_default();
             let comment = self.get_string_at_index(&row, 17); // Index für Comment in SHOW TABLE STATUS
 
-            if table_name.is_empty() { continue; }
+            if table_name.is_empty() {
+                continue;
+            }
 
             tables.push(ForgeTable {
                 name: table_name,
@@ -42,16 +46,15 @@ impl MySqlDriver {
         Ok(tables)
     }
 
-
-    async fn fetch_columns(&self, table_name: &str, config: &ForgeConfig)
-                           -> Result<Vec<ForgeColumn>, Box<dyn std::error::Error>>
-    {
+    async fn fetch_columns(
+        &self,
+        table_name: &str,
+        config: &ForgeConfig,
+    ) -> Result<Vec<ForgeColumn>, Box<dyn std::error::Error>> {
         // SHOW FULL FIELDS liefert:
         // Field, Type, Collation, Null, Key, Default, Extra, Privileges, Comment
         let query = format!("SHOW FULL FIELDS FROM `{}`", table_name);
-        let rows = sqlx::query(&query)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
 
         let mut columns = Vec::new();
         for row in rows {
@@ -73,7 +76,9 @@ impl MySqlDriver {
                 .to_string();
 
             // --- Mapping Logik ---
-            let mut target_type = config.types.get(&mysql_column_type.to_lowercase())
+            let mut target_type = config
+                .types
+                .get(&mysql_column_type.to_lowercase())
                 .or_else(|| config.types.get(&mysql_data_type.to_lowercase()))
                 .cloned()
                 .unwrap_or(mysql_data_type.clone());
@@ -103,7 +108,10 @@ impl MySqlDriver {
                 is_nullable: get_s("Null") == "YES",
                 is_primary_key: get_s("Key") == "PRI",
                 auto_increment: get_s("Extra").contains("auto_increment"),
-                default: row.try_get::<Option<Vec<u8>>, _>("Default").ok().flatten()
+                default: row
+                    .try_get::<Option<Vec<u8>>, _>("Default")
+                    .ok()
+                    .flatten()
                     .map(|b| String::from_utf8_lossy(&b).into_owned()),
                 comment: Some(get_s("Comment")),
                 enum_values,
@@ -122,17 +130,14 @@ impl MySqlDriver {
             .collect()
     }
 
-
-
-
-
-    async fn fetch_indices(&self, table_name: &str) -> Result<Vec<ForgeIndex>, Box<dyn std::error::Error>> {
+    async fn fetch_indices(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<ForgeIndex>, Box<dyn std::error::Error>> {
         // SHOW INDEX FROM `table` liefert:
         // Table, Non_unique, Key_name, Seq_in_index, Column_name, Collation, Cardinality, ...
         let query = format!("SHOW INDEX FROM `{}`", table_name);
-        let rows = sqlx::query(&query)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
 
         let mut indices_map: HashMap<String, ForgeIndex> = HashMap::new();
 
@@ -170,13 +175,13 @@ impl MySqlDriver {
         Ok(indices_map.into_values().collect())
     }
 
-
-
-    async fn fetch_foreign_keys(&self, table_name: &str) -> Result<Vec<ForgeForeignKey>, Box<dyn std::error::Error>> {
+    async fn fetch_foreign_keys(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<ForgeForeignKey>, Box<dyn std::error::Error>> {
         // TODO
         Ok(Vec::new())
     }
-
 
     /// Generiert das CREATE TABLE Statement für MySQL
     fn build_mysql_create_table_sql(&self, table: &ForgeTable) -> String {
@@ -186,36 +191,89 @@ impl MySqlDriver {
         for col in &table.columns {
             let mut def = format!("  `{}` {}", col.name, col.data_type);
 
-            if let Some(len) = col.length { def.push_str(&format!("({})", len)); }
-            if !col.is_nullable { def.push_str(" NOT NULL"); }
-            if let Some(default) = &col.default { def.push_str(&format!(" DEFAULT '{}'", default)); }
-            if col.auto_increment { def.push_str(" AUTO_INCREMENT"); }
+            if let Some(len) = col.length {
+                def.push_str(&format!("({})", len));
+            }
+            if !col.is_nullable {
+                def.push_str(" NOT NULL");
+            }
+            if let Some(default) = &col.default {
+                def.push_str(&format!(" DEFAULT '{}'", default));
+            }
+            if col.auto_increment {
+                def.push_str(" AUTO_INCREMENT");
+            }
 
             col_defs.push(def);
-            if col.is_primary_key { pks.push(format!("`{}`", col.name)); }
+            if col.is_primary_key {
+                pks.push(format!("`{}`", col.name));
+            }
         }
 
         if !pks.is_empty() {
             col_defs.push(format!("  PRIMARY KEY ({})", pks.join(", ")));
         }
 
-        format!("CREATE TABLE `{}` (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;", table.name, col_defs.join(",\n"))
+        format!(
+            "CREATE TABLE `{}` (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
+            table.name,
+            col_defs.join(",\n")
+        )
+    }
+
+    fn create_table_migration_sql(
+        &self,
+        dst_table: &ForgeTable,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        todo!()
+    }
+
+    fn delete_table_migration_sql(
+        &self,
+        dst_table: &ForgeTable,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        todo!()
+    }
+    fn alter_table_migration_sql(
+        &self,
+        src_table: &ForgeTable,
+        dst_table: &ForgeTable,
+        destructive: bool,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        todo!()
     }
 
     /// Generiert ein ALTER TABLE ADD COLUMN Statement
     fn build_mysql_add_column_sql(&self, table_name: &str, col: &ForgeColumn) -> String {
-        let mut def = format!("ALTER TABLE `{}` ADD COLUMN `{}` {}", table_name, col.name, col.data_type);
-        if let Some(len) = col.length { def.push_str(&format!("({})", len)); }
-        if !col.is_nullable { def.push_str(" NOT NULL"); }
-        if let Some(default) = &col.default { def.push_str(&format!(" DEFAULT '{}'", default)); }
+        let mut def = format!(
+            "ALTER TABLE `{}` ADD COLUMN `{}` {}",
+            table_name, col.name, col.data_type
+        );
+        if let Some(len) = col.length {
+            def.push_str(&format!("({})", len));
+        }
+        if !col.is_nullable {
+            def.push_str(" NOT NULL");
+        }
+        if let Some(default) = &col.default {
+            def.push_str(&format!(" DEFAULT '{}'", default));
+        }
         format!("{};", def)
     }
 
     /// Generiert ein CREATE INDEX Statement
     fn build_mysql_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
         let unique = if index.is_unique { "UNIQUE " } else { "" };
-        let cols = index.columns.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        format!("CREATE {}INDEX `{}` ON `{}` ({});", unique, index.name, table_name, cols)
+        let cols = index
+            .columns
+            .iter()
+            .map(|c| format!("`{}`", c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "CREATE {}INDEX `{}` ON `{}` ({});",
+            unique, index.name, table_name, cols
+        )
     }
 
     /// Liest eine Spalte an einem bestimmten Index sicher als String,
@@ -231,7 +289,6 @@ impl MySqlDriver {
         // Wandle Bytes in UTF-8 um, ignoriere ungültige Zeichen
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
-
 }
 
 #[async_trait]
@@ -239,7 +296,10 @@ impl DatabaseDriver for MySqlDriver {
     async fn has_data(&self, schema: &ForgeSchema) -> Result<bool, Box<dyn Error>> {
         todo!()
     }
-    async fn fetch_schema(&self, config: &ForgeConfig) -> Result<ForgeSchema, Box<dyn std::error::Error>> {
+    async fn fetch_schema(
+        &self,
+        config: &ForgeConfig,
+    ) -> Result<ForgeSchema, Box<dyn std::error::Error>> {
         // 1. Alle Tabellen-Hüllen mit Kommentaren holen
         let mut tables = self.fetch_tables().await?;
 
@@ -270,10 +330,11 @@ impl DatabaseDriver for MySqlDriver {
         })
     }
 
-
-    async fn apply_schema(&self, schema: &ForgeSchema, execute: bool)
-                          -> Result<Vec<String>, Box<dyn std::error::Error>>
-    {
+    async fn apply_schema(
+        &self,
+        schema: &ForgeSchema,
+        execute: bool,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut all_statements = Vec::new();
 
         for table in &schema.tables {
@@ -337,9 +398,26 @@ impl DatabaseDriver for MySqlDriver {
         Ok(all_statements)
     }
 
+    async fn diff_schema(
+        &self,
+        source_schema: &ForgeSchema,
+        config: &ForgeConfig,
+        execute: bool,
+        destructive: bool,
+    ) -> Result<Vec<String>, Box<dyn Error>> {
+        let target_schema = self.fetch_schema(config).await?;
+        let mut all_statements = Vec::new();
 
+        for table in &source_schema.tables {
 
+            // TODO
+            // WENN tabelle in source_schema, aber nicht in target_schema UND destructive -> delete_table_migration_sql()
+            // WENN tabelle in target_schema, aber nicht in source_schema -> create_table_migration_sql()
+            // WENN tabelle in source_schema und target_schema -> alter_table_migration_sql()
+        }
 
+        Ok(all_statements)
+    }
 
     async fn stream_table_data(
         &self,
@@ -433,6 +511,4 @@ impl DatabaseDriver for MySqlDriver {
 
         Ok(())
     }
-
-
 }

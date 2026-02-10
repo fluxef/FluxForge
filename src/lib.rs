@@ -29,6 +29,15 @@ pub trait DatabaseDriver: Send + Sync {
         execute: bool,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
+    async fn diff_schema(
+        &self,
+        schema: &ForgeSchema,
+        config: &ForgeConfig,
+        execute: bool,
+        destructive:bool,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>>;
+
+
     // Gibt einen Stream von Zeilen zurück
     async fn stream_table_data(
         &self,

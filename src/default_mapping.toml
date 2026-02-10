@@ -6,11 +6,14 @@ default_charset = "utf8mb4"
 [types]
 # Explizite Typ-Konvertierungen
 "tinyint(1)" = "boolean"
-"datetime"   = "timestamp"
+"datetime" = "datetime"
+"timestamp" = "datetimetz"
 "mediumtext" = "text"
-"longtext"   = "text"
-"double"     = "double precision"
-"blob"       = "bytea"
+"longtext" = "text"
+"double" = "double precision"
+# "blob"       = "bytea"
+"blob" = "longblob"
+
 
 [rules]
 # Logikbasierte Regeln
@@ -20,13 +23,8 @@ unsigned_int_to_bigint = true
 # Behandelt MySQL "0000-00-00" Datumsangaben
 nullify_invalid_dates = true
 
-[tables]
-# Spezifische Umbenennungen oder Mappings für einzelne Tabellen
-[tables.renames]
-"old_users_table" = "users"
-
 [tables.column_overrides.users]
 # Spezifische Spalten-Typänderungen in der Tabelle 'users'
 "is_active" = "boolean"
-"raw_data"  = "jsonb"
+"raw_data" = "jsonb"
 

@@ -146,7 +146,7 @@ impl DatabaseDriver for PostgresDriver {
         &self,
         schema: &ForgeSchema,
         config: &ForgeConfig,
-        execute: bool,
+        dry_run: bool,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut all_statements = Vec::new();
 
@@ -155,7 +155,7 @@ impl DatabaseDriver for PostgresDriver {
             let enum_sqls = self.build_enum_types_sql(table);
             for sql in enum_sqls {
                 all_statements.push(sql.clone());
-                if execute { sqlx::query(&sql).execute(&self.pool).await?; }
+                if !dry_run { sqlx::query(&sql).execute(&self.pool).await?; }
             }
         }
 
@@ -164,7 +164,7 @@ impl DatabaseDriver for PostgresDriver {
         for table in &schema.tables {
             let sql = self.build_create_table_sql(table);
             all_statements.push(sql.clone());
-            if execute {
+            if !dry_run {
                 sqlx::query(&sql).execute(&self.pool).await?;
             }
         }
@@ -174,7 +174,7 @@ impl DatabaseDriver for PostgresDriver {
             for index in &table.indices {
                 let sql = self.build_create_index_sql(&table.name, index);
                 all_statements.push(sql.clone());
-                if execute {
+                if !dry_run {
                     sqlx::query(&sql).execute(&self.pool).await?;
                 }
             }
@@ -185,7 +185,7 @@ impl DatabaseDriver for PostgresDriver {
             for fk in &table.foreign_keys {
                 let sql = self.build_create_fk_sql(&table.name, fk);
                 all_statements.push(sql.clone());
-                if execute {
+                if !dry_run {
                     // Falls der FK schon existiert, könnte Postgres einen Fehler werfen.
                     // Man kann 'IF NOT EXISTS' bei Constraints leider nicht nutzen,
                     // daher ist ein try-catch oder Check sinnvoll.
@@ -288,23 +288,14 @@ impl DatabaseDriver for PostgresDriver {
 
         Ok(Box::pin(futures::stream::iter(stream)))
     }
-    async fn has_data(&self, schema: &ForgeSchema) -> Result<bool, Box<dyn std::error::Error>> {
-        for table in &schema.tables {
-            // Prüfen, ob die Tabelle überhaupt existiert
-            let table_exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)"
-            )
-                .bind(&table.name)
-                .fetch_one(&self.pool).await?;
+    async fn db_is_empty(&self) -> Result<bool, Box<dyn Error>> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema()",
+        )
+        .fetch_one(&self.pool)
+        .await?;
 
-            if table_exists {
-                // Wenn sie existiert, prüfen ob Zeilen drin sind
-                let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{}\"", table.name))
-                    .fetch_one(&self.pool).await?;
-                if count > 0 { return Ok(true); }
-            }
-        }
-        Ok(false)
+        Ok(count == 0)
     }
 
     async fn diff_schema(&self, schema: &ForgeSchema, config: &ForgeConfig, execute: bool, destructive: bool) -> Result<Vec<String>, Box<dyn Error>> {

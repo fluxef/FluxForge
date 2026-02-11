@@ -13,7 +13,7 @@ use std::pin::Pin;
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
     /// Prüft, ob in den Tabellen des Schemas bereits Daten im Ziel existieren.
-    async fn has_data(&self, schema: &ForgeSchema) -> Result<bool, Box<dyn std::error::Error>>;
+    async fn db_is_empty(&self) -> Result<bool, Box<dyn std::error::Error>>;
 
     // ... fetch_schema, apply_schema ...
     // Liest das gesamte Schema ein
@@ -27,14 +27,14 @@ pub trait DatabaseDriver: Send + Sync {
         &self,
         source_schema: &ForgeSchema,
         config: &ForgeConfig,
-        execute: bool,
+        dry_run: bool,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
     async fn diff_schema(
         &self,
         schema: &ForgeSchema,
         config: &ForgeConfig,
-        execute: bool,
+        dry_run: bool,
         destructive:bool,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 

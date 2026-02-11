@@ -1,4 +1,6 @@
-use crate::core::{ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeMetadata, ForgeSchema, ForgeTable};
+use crate::core::{
+    ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeMetadata, ForgeSchema, ForgeTable,
+};
 use crate::{DatabaseDriver, ForgeColumn};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
@@ -89,7 +91,9 @@ impl MySqlDriver {
 
             // Unsigned Regel anwenden
             if let Some(rules) = &config.rules {
-                if rules.unsigned_int_to_bigint.unwrap_or(false) && mysql_column_type.contains("unsigned") {
+                if rules.unsigned_int_to_bigint.unwrap_or(false)
+                    && mysql_column_type.contains("unsigned")
+                {
                     if mysql_data_type.contains("int") {
                         target_type = "bigint".to_string();
                     }
@@ -264,7 +268,8 @@ impl MySqlDriver {
         for dst_col in &dst_table.columns {
             if let Some(src_col) = src_cols.get(&dst_col.name) {
                 // WENN eine ForgeColumn in beiden vorkommt -> modify_column_migration_sql()
-                let sql = self.modify_column_migration(&dst_table.name, src_col, dst_col, destructive);
+                let sql =
+                    self.modify_column_migration(&dst_table.name, src_col, dst_col, destructive);
                 if !sql.is_empty() {
                     all_statements.push(sql);
                 }
@@ -292,7 +297,10 @@ impl MySqlDriver {
     }
 
     fn drop_column_migration(&self, table_name: &str, src_col: &ForgeColumn) -> String {
-        format!("ALTER TABLE `{}` DROP COLUMN `{}`;", table_name, src_col.name)
+        format!(
+            "ALTER TABLE `{}` DROP COLUMN `{}`;",
+            table_name, src_col.name
+        )
     }
 
     fn modify_column_migration(
@@ -302,7 +310,6 @@ impl MySqlDriver {
         dst_col: &ForgeColumn,
         _destructive: bool,
     ) -> String {
-
         if src_col.data_type != dst_col.data_type
             || src_col.length != dst_col.length
             || src_col.is_nullable != dst_col.is_nullable
@@ -326,7 +333,7 @@ impl MySqlDriver {
         "".to_string()
     }
 
-        /// Generiert ein ALTER TABLE ADD COLUMN Statement
+    /// Generiert ein ALTER TABLE ADD COLUMN Statement
     fn build_mysql_add_column_sql(&self, table_name: &str, col: &ForgeColumn) -> String {
         let mut def = format!(
             "ALTER TABLE `{}` ADD COLUMN `{}` {}",
@@ -376,9 +383,16 @@ impl MySqlDriver {
 
 #[async_trait]
 impl DatabaseDriver for MySqlDriver {
-    async fn has_data(&self, schema: &ForgeSchema) -> Result<bool, Box<dyn Error>> {
-        todo!()
+    async fn db_is_empty(&self) -> Result<bool, Box<dyn Error>> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(count == 0)
     }
+    
     async fn fetch_schema(
         &self,
         config: &ForgeConfig,
@@ -424,38 +438,40 @@ impl DatabaseDriver for MySqlDriver {
         &self,
         source_schema: &ForgeSchema,
         config: &ForgeConfig,
-        execute: bool,
-        ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        dry_run: bool,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut all_statements = Vec::new();
 
-        let src_schema=ForgeSchema::new();
+        let src_schema = ForgeSchema::new();
 
-        all_statements = self.diff_schema(&src_schema, config, execute, false).await?;
-        
-/*
-            // 2. Indizes hinzufügen (falls nicht vorhanden)
-            // MySQL hat kein "CREATE INDEX IF NOT EXISTS" (vor Version 8.0.30),
-            // daher prüfen wir manuell über information_schema
-            for index in &table.indices {
-                let index_exists: bool = sqlx::query_scalar(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?)"
-                )
-                    .bind(&table.name)
-                    .bind(&index.name)
-                    .fetch_one(&self.pool)
-                    .await?;
+        all_statements = self
+            .diff_schema(&src_schema, config, dry_run, false)
+            .await?;
 
-                if !index_exists {
-                    let sql = self.build_mysql_create_index_sql(&table.name, index);
-                    all_statements.push(sql.clone());
-                    if execute {
-                        sqlx::query(&sql).execute(&self.pool).await?;
+        /*
+                    // 2. Indizes hinzufügen (falls nicht vorhanden)
+                    // MySQL hat kein "CREATE INDEX IF NOT EXISTS" (vor Version 8.0.30),
+                    // daher prüfen wir manuell über information_schema
+                    for index in &table.indices {
+                        let index_exists: bool = sqlx::query_scalar(
+                            "SELECT EXISTS (SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?)"
+                        )
+                            .bind(&table.name)
+                            .bind(&index.name)
+                            .fetch_one(&self.pool)
+                            .await?;
+
+                        if !index_exists {
+                            let sql = self.build_mysql_create_index_sql(&table.name, index);
+                            all_statements.push(sql.clone());
+                            if execute {
+                                sqlx::query(&sql).execute(&self.pool).await?;
+                            }
+                        }
                     }
                 }
-            }
-        }
-*/
-        
+        */
+
         Ok(all_statements)
     }
 
@@ -463,7 +479,7 @@ impl DatabaseDriver for MySqlDriver {
         &self,
         source_schema: &ForgeSchema,
         config: &ForgeConfig,
-        execute: bool,
+        dry_run: bool,
         destructive: bool,
     ) -> Result<Vec<String>, Box<dyn Error>> {
         let target_schema = self.fetch_schema(config).await?;
@@ -487,7 +503,7 @@ impl DatabaseDriver for MySqlDriver {
                 all_statements.extend(stmts);
             } else {
                 // WENN tabelle in target_schema, aber nicht in source_schema -> create_table_migration_sql()
-                // (Anmerkung: In der Logik des Codes ist source_schema das Ziel-Schema, 
+                // (Anmerkung: In der Logik des Codes ist source_schema das Ziel-Schema,
                 //  daher ist eine Tabelle, die in source aber nicht in target ist, neu zu erstellen)
                 let stmts = self.create_table_migration_sql(table)?;
                 all_statements.extend(stmts);
@@ -505,7 +521,7 @@ impl DatabaseDriver for MySqlDriver {
             }
         }
 
-        if execute {
+        if !dry_run {
             for sql in &all_statements {
                 sqlx::query(sql).execute(&self.pool).await?;
             }

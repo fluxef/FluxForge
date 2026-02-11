@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ArgGroup};
+use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -10,7 +10,6 @@ pub struct Cli {
     /// Verbose output
     #[arg(long, short = 'v', global = true)]
     pub verbose: bool,
-
 }
 
 #[derive(Subcommand)]
@@ -33,7 +32,7 @@ pub enum Commands {
             .args(["source", "schema"]),
     ))]
     Migrate {
-        /// MySQL source URL (required for data migration)
+        /// source DB-URL, typically MYSQL
         #[arg(long)]
         source: Option<String>,
 
@@ -56,28 +55,20 @@ pub enum Commands {
         allow_destructive: bool,
     },
     Replicate {
-        /// MySQL source URL (required for data migration)
+        /// source DB-URL, typically MYSQL
         #[arg(long)]
-        source: Option<String>,
+        source: String,
 
-        /// Path to internal schema JSON file
-        #[arg(long)]
-        schema: Option<PathBuf>,
-
-        /// PostgreSQL target URL
+        /// target DB-URL, typically PostgreSQL
         #[arg(long)]
         target: String,
 
+        /// Config-File with transformations to apply to the schema
         #[arg(long)]
         config: Option<PathBuf>,
 
         /// Output SQL statements without executing them
         #[arg(long)]
         dry_run: bool,
-
-        #[arg(long)]
-        allow_destructive: bool,
     },
-
-
 }

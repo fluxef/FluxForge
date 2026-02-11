@@ -1,0 +1,12 @@
+# standard-file without mapping
+# only useful if source AND target are mysql
+
+
+[general]
+
+[types]
+
+[rules]
+
+[tables.column_overrides.users]
+

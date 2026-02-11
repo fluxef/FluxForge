@@ -107,23 +107,66 @@ impl MySqlDriver {
                 None
             };
 
+            // Extra-Informationen auswerten (AUTO_INCREMENT, ON UPDATE ...)
+            let extra = get_s("Extra");
+            // Wenn Extra mit "ON UPDATE " beginnt, Rest als on_update wert übernehmen (case-insensitive)
+            let on_update = if extra.len() >= 10 && extra[..10].eq_ignore_ascii_case("ON UPDATE ") {
+                Some(extra[10..].to_string())
+            } else {
+                None
+            };
+
+            // Parse length/precision/scale from column type string
+            let mut length: Option<u32> = None;
+            let mut precision: Option<u32> = None;
+            let mut scale: Option<u32> = None;
+
+            if let Some(start) = mysql_column_type.find('(') {
+                if let Some(end_rel) = mysql_column_type[start + 1..].find(')') {
+                    let inside = &mysql_column_type[start + 1..start + 1 + end_rel];
+                    let inside_clean = inside.replace(' ', "");
+
+                    if mysql_data_type.eq_ignore_ascii_case("char")
+                        || mysql_data_type.eq_ignore_ascii_case("varchar")
+                    {
+                        if let Ok(l) = inside_clean.parse::<u32>() {
+                            length = Some(l);
+                        }
+                    } else if mysql_data_type.eq_ignore_ascii_case("float")
+                        || mysql_data_type.eq_ignore_ascii_case("decimal")
+                    {
+                        let parts: Vec<&str> = inside_clean.split(',').collect();
+                        if let Some(p0) = parts.get(0) {
+                            if let Ok(p) = p0.parse::<u32>() {
+                                precision = Some(p);
+                            }
+                        }
+                        if let Some(p1) = parts.get(1) {
+                            if let Ok(s) = p1.parse::<u32>() {
+                                scale = Some(s);
+                            }
+                        }
+                    }
+                }
+            }
+
             columns.push(ForgeColumn {
                 name: col_name,
-                data_type: target_type.to_uppercase(),
-                // Längen/Precision/Scale müssten bei SHOW FIELDS komplexer aus dem String geparst werden
-                // Falls du diese exakt brauchst, ist information_schema.columns überlegen.
-                length: None,
-                precision: None,
-                scale: None,
+                data_type: target_type.to_lowercase(),
+                // Length/Precision/Scale parsed from MySQL column type if present
+                length: length,
+                precision: precision,
+                scale: scale,
                 is_nullable: get_s("Null") == "YES",
                 is_primary_key: get_s("Key") == "PRI",
-                auto_increment: get_s("Extra").contains("auto_increment"),
+                auto_increment: extra.contains("auto_increment"),
                 default: row
                     .try_get::<Option<Vec<u8>>, _>("Default")
                     .ok()
                     .flatten()
                     .map(|b| String::from_utf8_lossy(&b).into_owned()),
                 comment: Some(get_s("Comment")),
+                on_update,
                 enum_values,
             });
         }
@@ -193,28 +236,97 @@ impl MySqlDriver {
         Ok(Vec::new())
     }
 
+    fn field_migration_sql(&self, field: ForgeColumn) -> String {
+
+        let binding = field.data_type.to_lowercase();
+        let sql_type = match binding.as_str() {
+            "integer" => "int",
+            "biginteger" => "bigint",
+            "text" => "longtext",
+            "datetimetz" => "timestamp",
+            "blob" => "longblob",
+            // Nur die Typen auflisten, die sich wirklich ändern!
+            other => other,
+        };
+
+        let mut ret = String::new();
+
+        //  Name
+        ret.push_str(&format!("`{}`", field.name));
+
+        // Type & Parameters
+        ret.push_str(&format!(" {}", sql_type));
+
+        match sql_type {
+            "decimal" => {
+                if let (Some(p), Some(s)) = (field.precision, field.scale) {
+                    ret.push_str(&format!("({},{})", p, s));
+                } else if let Some(p) = field.precision {
+                    ret.push_str(&format!("({})", p));
+                }
+            }
+            "varchar" | "char" => {
+                if let Some(l) = field.length {
+                    ret.push_str(&format!("({})", l));
+                }
+            }
+            "enum" => {
+                if let Some(ref vals) = field.enum_values {
+                    let formatted_vals: Vec<String> =
+                        vals.iter().map(|v| format!("'{}'", v)).collect();
+                    ret.push_str(&format!("({})", formatted_vals.join(",")));
+                }
+            }
+            _ => {}
+        }
+
+        // Nullable & Default NULL
+        if !field.is_nullable  {
+            ret.push_str(" NOT NULL");
+        } else {
+            ret.push_str(" NULL");
+            if field.default.is_none() {
+                ret.push_str(" DEFAULT NULL");
+            }
+        }
+
+        // Default Value
+        if let Some(ref def) = field.default {
+            if def.to_lowercase() == "current_timestamp" {
+                ret.push_str(" DEFAULT CURRENT_TIMESTAMP");
+            } else {
+                ret.push_str(&format!(" DEFAULT '{}'", def));
+            }
+        }
+
+        // Auto Increment
+        if field.auto_increment  {
+            ret.push_str(" AUTO_INCREMENT");
+        }
+
+        // On Update
+        if let Some(ref on_upd) = field.on_update {
+            if let Some(ref def) = field.default {
+                if def.to_lowercase() == "current_timestamp" {
+                    ret.push_str(" ON UPDATE CURRENT_TIMESTAMP");
+                } else {
+                    ret.push_str(&format!(" ON UPDATE {}", on_upd));
+                }
+            }
+        }
+
+        ret
+    }
+
     /// Generiert das CREATE TABLE Statement für MySQL
     fn build_mysql_create_table_sql(&self, table: &ForgeTable) -> String {
         let mut col_defs = Vec::new();
         let mut pks = Vec::new();
 
         for col in &table.columns {
-            let mut def = format!("  `{}` {}", col.name, col.data_type);
-
-            if let Some(len) = col.length {
-                def.push_str(&format!("({})", len));
-            }
-            if !col.is_nullable {
-                def.push_str(" NOT NULL");
-            }
-            if let Some(default) = &col.default {
-                def.push_str(&format!(" DEFAULT '{}'", default));
-            }
-            if col.auto_increment {
-                def.push_str(" AUTO_INCREMENT");
-            }
-
+            let def = self.field_migration_sql(col.clone());
             col_defs.push(def);
+
             if col.is_primary_key {
                 pks.push(format!("`{}`", col.name));
             }
@@ -235,8 +347,15 @@ impl MySqlDriver {
         &self,
         dst_table: &ForgeTable,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let mut stmts = Vec::new();
         let sql = self.build_mysql_create_table_sql(dst_table);
-        Ok(vec![sql])
+        stmts.push(sql);
+        // Nach dem Erstellen der Tabelle auch alle Nicht-PK-Indizes anlegen
+        for index in &dst_table.indices {
+            let idx_sql = self.build_mysql_create_index_sql(&dst_table.name, index);
+            stmts.push(idx_sql);
+        }
+        Ok(stmts)
     }
 
     fn delete_table_migration_sql(
@@ -254,6 +373,7 @@ impl MySqlDriver {
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut all_statements = Vec::new();
 
+        // ---- Columns ----
         let mut src_cols: HashMap<String, &ForgeColumn> = HashMap::new();
         for col in &src_table.columns {
             src_cols.insert(col.name.clone(), col);
@@ -285,6 +405,48 @@ impl MySqlDriver {
                 if !dst_cols.contains_key(&src_col.name) {
                     // WENN eine ForgeColumn in src_table.columns ABER NICHT in dst_table.columns UND destructiv -> drop_column_migration_sql()
                     all_statements.push(self.drop_column_migration(&dst_table.name, src_col));
+                }
+            }
+        }
+
+        // ---- Indizes ----
+        let mut src_idx_map: HashMap<String, &ForgeIndex> = HashMap::new();
+        for idx in &src_table.indices {
+            src_idx_map.insert(idx.name.clone(), idx);
+        }
+        let mut dst_idx_map: HashMap<String, &ForgeIndex> = HashMap::new();
+        for idx in &dst_table.indices {
+            dst_idx_map.insert(idx.name.clone(), idx);
+        }
+
+        // a) Fehlende Indizes in Quelle -> anlegen
+        for (name, dst_idx) in &dst_idx_map {
+            match src_idx_map.get(name) {
+                None => {
+                    // Index existiert in Ziel-Schema, aber nicht in aktueller DB -> CREATE INDEX
+                    let sql = self.build_mysql_create_index_sql(&dst_table.name, dst_idx);
+                    all_statements.push(sql);
+                }
+                Some(src_idx) => {
+                    // In beiden vorhanden -> Gleichheit prüfen, ggf. ersetzen
+                    if !self.indices_equal(src_idx, dst_idx) {
+                        // Alten durch neuen ersetzen: DROP + CREATE (Ersetzen unabhängig von destructive)
+                        let drop_sql = self.build_mysql_drop_index_sql(&dst_table.name, name);
+                        let create_sql =
+                            self.build_mysql_create_index_sql(&dst_table.name, dst_idx);
+                        all_statements.push(drop_sql);
+                        all_statements.push(create_sql);
+                    }
+                }
+            }
+        }
+
+        // b) Zusätzliche Indizes in aktueller DB -> ggf. löschen (nur wenn destructive)
+        if destructive {
+            for (name, src_idx) in &src_idx_map {
+                if !dst_idx_map.contains_key(name) {
+                    let drop_sql = self.build_mysql_drop_index_sql(&dst_table.name, &src_idx.name);
+                    all_statements.push(drop_sql);
                 }
             }
         }
@@ -366,6 +528,27 @@ impl MySqlDriver {
         )
     }
 
+    /// Generiert ein DROP INDEX Statement
+    fn build_mysql_drop_index_sql(&self, table_name: &str, index_name: &str) -> String {
+        format!("DROP INDEX `{}` ON `{}`;", index_name, table_name)
+    }
+
+    /// Prüft, ob zwei Indizes identisch sind (Name außen vor, da über Map-Schlüssel geprüft)
+    fn indices_equal(&self, a: &ForgeIndex, b: &ForgeIndex) -> bool {
+        if a.is_unique != b.is_unique {
+            return false;
+        }
+        if a.columns.len() != b.columns.len() {
+            return false;
+        }
+        for (i, col) in a.columns.iter().enumerate() {
+            if b.columns.get(i) != Some(col) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Liest eine Spalte an einem bestimmten Index sicher als String,
     /// auch wenn MySQL VARBINARY oder BLOB zurückgibt.
     fn get_string_at_index(&self, row: &sqlx::mysql::MySqlRow, index: usize) -> Option<String> {
@@ -392,7 +575,7 @@ impl DatabaseDriver for MySqlDriver {
 
         Ok(count == 0)
     }
-    
+
     async fn fetch_schema(
         &self,
         config: &ForgeConfig,
@@ -447,30 +630,6 @@ impl DatabaseDriver for MySqlDriver {
         all_statements = self
             .diff_schema(&src_schema, config, dry_run, false)
             .await?;
-
-        /*
-                    // 2. Indizes hinzufügen (falls nicht vorhanden)
-                    // MySQL hat kein "CREATE INDEX IF NOT EXISTS" (vor Version 8.0.30),
-                    // daher prüfen wir manuell über information_schema
-                    for index in &table.indices {
-                        let index_exists: bool = sqlx::query_scalar(
-                            "SELECT EXISTS (SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?)"
-                        )
-                            .bind(&table.name)
-                            .bind(&index.name)
-                            .fetch_one(&self.pool)
-                            .await?;
-
-                        if !index_exists {
-                            let sql = self.build_mysql_create_index_sql(&table.name, index);
-                            all_statements.push(sql.clone());
-                            if execute {
-                                sqlx::query(&sql).execute(&self.pool).await?;
-                            }
-                        }
-                    }
-                }
-        */
 
         Ok(all_statements)
     }

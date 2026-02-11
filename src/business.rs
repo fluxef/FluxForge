@@ -1,5 +1,5 @@
 use crate::cli::Commands;
-use fluxforge::config::load_config;
+use fluxforge::config::{get_config_file_path, load_config};
 use fluxforge::{drivers, DatabaseDriver, ForgeSchema, ForgeTable};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -21,11 +21,11 @@ pub async fn handle_command(
 
             // 1. Konfiguration laden (Nutzt Standard, wenn keine Datei angegeben)
             // Wir nutzen hier die Logik mit include_str!, die wir besprochen hatten
-            let forge_config = load_config(config);
+            let forge_config = load_config(config.clone());
             if verbose {
                 println!(
                     "Configuration loaded (using Mappings for {} types)",
-                    forge_config.types.len()
+                    forge_config.types.as_ref().map(|t| t.len()).unwrap_or(0)
                 );
             }
 
@@ -34,8 +34,9 @@ pub async fn handle_command(
 
             // 3. Schema extrahieren
             // Der Driver sollte intern die forge_config nutzen, um Typen zu normalisieren
-            let extracted_schema = source_driver.fetch_schema(&forge_config).await?;
-
+            let mut extracted_schema = source_driver.fetch_schema(&forge_config).await?;
+            extracted_schema.metadata.config_file = get_config_file_path(config.clone());
+            
             if verbose {
                 println!(
                     "📊 Extracted {} tables from source.",
@@ -107,7 +108,7 @@ pub async fn handle_command(
                 }
 
                 // Wenn leer, dann Struktur anlegen und Daten schieben
-                target_driver.apply_schema(&schema, !dry_run).await?;
+                target_driver.create_schema(&schema,&forge_config, !dry_run).await?;
                 if !dry_run {
                     if let Some(s_driver) = source_driver {
                         migrate_data(s_driver.as_ref(), target_driver.as_ref(), &schema, verbose).await?;
@@ -117,9 +118,9 @@ pub async fn handle_command(
                 // FALL B: Nur Struktur-Anpassung (--schema-only oder Datei-Modus)
                 println!("🔄 Modus: Struktur-Anpassung (In-Place Evolution).");
 
-                // Hier rufen wir apply_schema auf.
+                // Hier rufen wir create_schema auf.
                 // Der Postgres-Driver muss hier intern erkennen, ob er CREATE oder ALTER nutzt.
-                let statements = target_driver.apply_schema(&schema, !dry_run).await?;
+                let statements = target_driver.create_schema(&schema, &forge_config, !dry_run).await?;
 
                 if dry_run {
                     println!("📝 --- DRY RUN: Geplante Strukturänderungen ---");

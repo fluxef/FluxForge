@@ -23,9 +23,10 @@ pub trait DatabaseDriver: Send + Sync {
     ) -> Result<ForgeSchema, Box<dyn std::error::Error>>;
 
     // Schreibt die Struktur (wichtig für Migrate/Dry-Run)
-    async fn apply_schema(
+    async fn create_schema(
         &self,
-        schema: &ForgeSchema,
+        source_schema: &ForgeSchema,
+        config: &ForgeConfig,
         execute: bool,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 

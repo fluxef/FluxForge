@@ -1,6 +1,4 @@
-use crate::core::{
-    ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeSchema, ForgeTable, SchemaMetadata,
-};
+use crate::core::{ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeMetadata, ForgeSchema, ForgeTable};
 use crate::{DatabaseDriver, ForgeColumn};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
@@ -78,15 +76,23 @@ impl MySqlDriver {
             // --- Mapping Logik ---
             let mut target_type = config
                 .types
-                .get(&mysql_column_type.to_lowercase())
-                .or_else(|| config.types.get(&mysql_data_type.to_lowercase()))
+                .as_ref()
+                .and_then(|t| t.get(&mysql_column_type.to_lowercase()))
+                .or_else(|| {
+                    config
+                        .types
+                        .as_ref()
+                        .and_then(|t| t.get(&mysql_data_type.to_lowercase()))
+                })
                 .cloned()
                 .unwrap_or(mysql_data_type.clone());
 
             // Unsigned Regel anwenden
-            if config.rules.unsigned_int_to_bigint && mysql_column_type.contains("unsigned") {
-                if mysql_data_type.contains("int") {
-                    target_type = "bigint".to_string();
+            if let Some(rules) = &config.rules {
+                if rules.unsigned_int_to_bigint.unwrap_or(false) && mysql_column_type.contains("unsigned") {
+                    if mysql_data_type.contains("int") {
+                        target_type = "bigint".to_string();
+                    }
                 }
             }
 
@@ -225,14 +231,16 @@ impl MySqlDriver {
         &self,
         dst_table: &ForgeTable,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        todo!()
+        let sql = self.build_mysql_create_table_sql(dst_table);
+        Ok(vec![sql])
     }
 
     fn delete_table_migration_sql(
         &self,
         dst_table: &ForgeTable,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        todo!()
+        let sql = format!("DROP TABLE `{}`;", dst_table.name);
+        Ok(vec![sql])
     }
     fn alter_table_migration_sql(
         &self,
@@ -240,10 +248,85 @@ impl MySqlDriver {
         dst_table: &ForgeTable,
         destructive: bool,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        todo!()
+        let mut all_statements = Vec::new();
+
+        let mut src_cols: HashMap<String, &ForgeColumn> = HashMap::new();
+        for col in &src_table.columns {
+            src_cols.insert(col.name.clone(), col);
+        }
+
+        let mut dst_cols: HashMap<String, &ForgeColumn> = HashMap::new();
+        for col in &dst_table.columns {
+            dst_cols.insert(col.name.clone(), col);
+        }
+
+        // 1. Spalten vergleichen, die in dst_table sind (was wir haben wollen)
+        for dst_col in &dst_table.columns {
+            if let Some(src_col) = src_cols.get(&dst_col.name) {
+                // WENN eine ForgeColumn in beiden vorkommt -> modify_column_migration_sql()
+                let sql = self.modify_column_migration(&dst_table.name, src_col, dst_col, destructive);
+                if !sql.is_empty() {
+                    all_statements.push(sql);
+                }
+            } else {
+                // WENN eine ForgeColumn NICHT in src_table.columns ABER in dst_table.columns -> add_column_migration_sql()
+                all_statements.push(self.add_column_migration(&dst_table.name, dst_col));
+            }
+        }
+
+        // 2. Spalten prüfen, die in src_table sind, aber nicht in dst_table
+        if destructive {
+            for src_col in &src_table.columns {
+                if !dst_cols.contains_key(&src_col.name) {
+                    // WENN eine ForgeColumn in src_table.columns ABER NICHT in dst_table.columns UND destructiv -> drop_column_migration_sql()
+                    all_statements.push(self.drop_column_migration(&dst_table.name, src_col));
+                }
+            }
+        }
+
+        Ok(all_statements)
     }
 
-    /// Generiert ein ALTER TABLE ADD COLUMN Statement
+    fn add_column_migration(&self, table_name: &str, dst_col: &ForgeColumn) -> String {
+        self.build_mysql_add_column_sql(table_name, dst_col)
+    }
+
+    fn drop_column_migration(&self, table_name: &str, src_col: &ForgeColumn) -> String {
+        format!("ALTER TABLE `{}` DROP COLUMN `{}`;", table_name, src_col.name)
+    }
+
+    fn modify_column_migration(
+        &self,
+        table_name: &str,
+        src_col: &ForgeColumn,
+        dst_col: &ForgeColumn,
+        _destructive: bool,
+    ) -> String {
+
+        if src_col.data_type != dst_col.data_type
+            || src_col.length != dst_col.length
+            || src_col.is_nullable != dst_col.is_nullable
+            || src_col.default != dst_col.default
+        {
+            let mut def = format!(
+                "ALTER TABLE `{}` MODIFY COLUMN `{}` {}",
+                table_name, dst_col.name, dst_col.data_type
+            );
+            if let Some(len) = dst_col.length {
+                def.push_str(&format!("({})", len));
+            }
+            if !dst_col.is_nullable {
+                def.push_str(" NOT NULL");
+            }
+            if let Some(default) = &dst_col.default {
+                def.push_str(&format!(" DEFAULT '{}'", default));
+            }
+            return format!("{};", def);
+        }
+        "".to_string()
+    }
+
+        /// Generiert ein ALTER TABLE ADD COLUMN Statement
     fn build_mysql_add_column_sql(&self, table_name: &str, col: &ForgeColumn) -> String {
         let mut def = format!(
             "ALTER TABLE `{}` ADD COLUMN `{}` {}",
@@ -300,6 +383,11 @@ impl DatabaseDriver for MySqlDriver {
         &self,
         config: &ForgeConfig,
     ) -> Result<ForgeSchema, Box<dyn std::error::Error>> {
+        // 0. Datenbankname ermitteln
+        let db_name: String = sqlx::query_scalar("SELECT DATABASE()")
+            .fetch_one(&self.pool)
+            .await?;
+
         // 1. Alle Tabellen-Hüllen mit Kommentaren holen
         let mut tables = self.fetch_tables().await?;
 
@@ -321,58 +409,30 @@ impl DatabaseDriver for MySqlDriver {
 
         // 3. In das ForgeSchema einbetten
         Ok(ForgeSchema {
-            metadata: SchemaMetadata {
+            metadata: ForgeMetadata {
                 source_system: "mysql".to_string(),
+                source_database_name: db_name,
                 created_at: chrono::Utc::now().to_rfc3339(),
                 forge_version: env!("CARGO_PKG_VERSION").to_string(),
+                config_file: "".to_string(),
             },
             tables,
         })
     }
 
-    async fn apply_schema(
+    async fn create_schema(
         &self,
-        schema: &ForgeSchema,
+        source_schema: &ForgeSchema,
+        config: &ForgeConfig,
         execute: bool,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut all_statements = Vec::new();
 
-        for table in &schema.tables {
-            // 1. Prüfen, ob die Tabelle bereits existiert
-            let table_exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?)"
-            )
-                .bind(&table.name)
-                .fetch_one(&self.pool)
-                .await?;
+        let src_schema=ForgeSchema::new();
 
-            if !table_exists {
-                // FALL: Tabelle komplett neu anlegen
-                let sql = self.build_mysql_create_table_sql(table);
-                all_statements.push(sql.clone());
-                if execute {
-                    sqlx::query(&sql).execute(&self.pool).await?;
-                }
-            } else {
-                // FALL: Tabelle existiert -> Fehlende Spalten ergänzen
-                let current_cols: Vec<String> = sqlx::query_scalar(
-                    "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?"
-                )
-                    .bind(&table.name)
-                    .fetch_all(&self.pool)
-                    .await?;
-
-                for col in &table.columns {
-                    if !current_cols.contains(&col.name) {
-                        let sql = self.build_mysql_add_column_sql(&table.name, col);
-                        all_statements.push(sql.clone());
-                        if execute {
-                            sqlx::query(&sql).execute(&self.pool).await?;
-                        }
-                    }
-                }
-            }
-
+        all_statements = self.diff_schema(&src_schema, config, execute, false).await?;
+        
+/*
             // 2. Indizes hinzufügen (falls nicht vorhanden)
             // MySQL hat kein "CREATE INDEX IF NOT EXISTS" (vor Version 8.0.30),
             // daher prüfen wir manuell über information_schema
@@ -394,7 +454,8 @@ impl DatabaseDriver for MySqlDriver {
                 }
             }
         }
-
+*/
+        
         Ok(all_statements)
     }
 
@@ -408,12 +469,46 @@ impl DatabaseDriver for MySqlDriver {
         let target_schema = self.fetch_schema(config).await?;
         let mut all_statements = Vec::new();
 
+        let mut source_tables: HashMap<String, &ForgeTable> = HashMap::new();
         for table in &source_schema.tables {
+            source_tables.insert(table.name.clone(), table);
+        }
 
-            // TODO
-            // WENN tabelle in source_schema, aber nicht in target_schema UND destructive -> delete_table_migration_sql()
-            // WENN tabelle in target_schema, aber nicht in source_schema -> create_table_migration_sql()
-            // WENN tabelle in source_schema und target_schema -> alter_table_migration_sql()
+        let mut target_tables: HashMap<String, &ForgeTable> = HashMap::new();
+        for table in &target_schema.tables {
+            target_tables.insert(table.name.clone(), table);
+        }
+
+        // 1. Tabellen vergleichen, die in source_schema sind
+        for table in &source_schema.tables {
+            if let Some(target_table) = target_tables.get(&table.name) {
+                // WENN tabelle in source_schema und target_schema -> alter_table_migration_sql()
+                let stmts = self.alter_table_migration_sql(target_table, table, destructive)?;
+                all_statements.extend(stmts);
+            } else {
+                // WENN tabelle in target_schema, aber nicht in source_schema -> create_table_migration_sql()
+                // (Anmerkung: In der Logik des Codes ist source_schema das Ziel-Schema, 
+                //  daher ist eine Tabelle, die in source aber nicht in target ist, neu zu erstellen)
+                let stmts = self.create_table_migration_sql(table)?;
+                all_statements.extend(stmts);
+            }
+        }
+
+        // 2. Tabellen prüfen, die in target_schema sind, aber nicht in source_schema
+        // WENN tabelle in source_schema, aber nicht in target_schema UND destructive -> delete_table_migration_sql()
+        if destructive {
+            for table in &target_schema.tables {
+                if !source_tables.contains_key(&table.name) {
+                    let stmts = self.delete_table_migration_sql(table)?;
+                    all_statements.extend(stmts);
+                }
+            }
+        }
+
+        if execute {
+            for sql in &all_statements {
+                sqlx::query(sql).execute(&self.pool).await?;
+            }
         }
 
         Ok(all_statements)

@@ -3,48 +3,56 @@ use std::collections::HashMap;
 
 // --- Konfigurations-Strukturen (für mapping.toml) ---
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ForgeConfig {
-    pub general: GeneralConfig,
-    pub types: HashMap<String, String>,
-    pub rules: RulesConfig,
+    pub general: Option<GeneralConfig>,
+    pub types: Option<HashMap<String, String>>,
+    pub rules: Option<RulesConfig>,
     pub tables: Option<TableConfig>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct GeneralConfig {
-    pub on_missing_type: String,
-    pub default_charset: String,
+    pub on_missing_type: Option<String>,
+    pub default_charset: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct RulesConfig {
-    pub unsigned_int_to_bigint: bool,
-    pub nullify_invalid_dates: bool,
+    pub unsigned_int_to_bigint: Option<bool>,
+    pub nullify_invalid_dates: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TableConfig {
-    pub renames: HashMap<String, String>,
-    pub column_overrides: HashMap<String, HashMap<String, String>>,
+    pub renames: Option<HashMap<String, String>>,
+    pub column_overrides: Option<HashMap<String, HashMap<String, String>>>,
 }
 
 // --- Schema-Strukturen (für interne Repräsentation / JSON) ---
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ForgeSchema {
-    pub metadata: SchemaMetadata,
+    pub metadata: ForgeMetadata,
     pub tables: Vec<ForgeTable>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SchemaMetadata {
-    pub source_system: String,
-    pub created_at: String,
-    pub forge_version: String,
+impl ForgeSchema {
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ForgeMetadata {
+    pub source_system: String,
+    pub source_database_name: String,
+    pub created_at: String,
+    pub forge_version: String,
+    pub config_file: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ForgeTable {
     pub name: String,
     pub columns: Vec<ForgeColumn>,
@@ -53,7 +61,16 @@ pub struct ForgeTable {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+impl ForgeTable {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ForgeColumn {
     pub name: String,
     pub data_type: String,
@@ -68,14 +85,24 @@ pub struct ForgeColumn {
     pub enum_values: Option<Vec<String>>, // Speichert ["active", "inactive", etc.]
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+impl ForgeColumn {
+    pub fn new(name: &str, data_type: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            data_type: data_type.to_string(),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ForgeIndex {
     pub name: String,
     pub columns: Vec<String>,
     pub is_unique: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ForgeForeignKey {
     pub name: String,
     pub column: String,

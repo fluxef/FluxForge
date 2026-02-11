@@ -142,9 +142,12 @@ impl DatabaseDriver for PostgresDriver {
         todo!("Postgres kann auch Quelle sein, Fokus liegt aber auf Target")
     }
 
-    async fn apply_schema(&self, schema: &ForgeSchema, execute: bool)
-                          -> Result<Vec<String>, Box<dyn std::error::Error>>
-    {
+    async fn create_schema(
+        &self,
+        schema: &ForgeSchema,
+        config: &ForgeConfig,
+        execute: bool,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut all_statements = Vec::new();
 
         // PHASE 0: Custom Types (Enums)

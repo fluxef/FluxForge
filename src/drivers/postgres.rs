@@ -209,7 +209,7 @@ impl DatabaseDriver for PostgresDriver {
         // 1. Spaltennamen aus dem ersten Datensatz extrahieren
         let first_row = chunk
             .first()
-            .unwrap()
+            .ok_or("Chunk is empty")?
             .as_object()
             .ok_or("Invalid row format")?;
         let columns: Vec<String> = first_row.keys().cloned().collect();

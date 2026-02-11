@@ -20,7 +20,7 @@ pub async fn handle_command(
             println!("Extracting schema from {}...", source);
 
             // Konfiguration laden (Nutzt Standard, wenn keine Datei angegeben)
-            let forge_config = load_config(config.clone());
+            let forge_config = load_config(config.clone())?;
             if verbose {
                 println!(
                     "Configuration loaded (using Mappings for {} types)",
@@ -65,7 +65,7 @@ pub async fn handle_command(
             allow_destructive,
         } => {
             // Konfiguration laden
-            let forge_config = load_config(config.clone());
+            let forge_config = load_config(config.clone())?;
 
             // Schema beschaffen & Modus festlegen
             let mut source_driver = None;
@@ -82,7 +82,7 @@ pub async fn handle_command(
                 int_schema
             } else {
                 // --- Live-Modus ---
-                let src_url = source.as_ref().unwrap(); // Durch Clap-Gruppe garantiert vorhanden
+                let src_url = source.as_ref().ok_or("Source URL is required in live mode")?;
                 let s_driver = drivers::create_driver(src_url).await?;
                 let int_schema = s_driver.fetch_schema(&forge_config).await?;
                 source_driver = Some(s_driver);
@@ -122,7 +122,7 @@ pub async fn handle_command(
             dry_run,
         } => {
             // Konfiguration laden
-            let forge_config = load_config(config.clone());
+            let forge_config = load_config(config.clone())?;
 
             // Ziel-Treiber
             let target_driver = drivers::create_driver(&target).await?;
@@ -231,7 +231,7 @@ pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTabl
 
     // 2. Kanten (Edges) für Foreign Keys ziehen
     for table in &schema.tables {
-        let from_idx = nodes.get(&table.name).unwrap();
+        let from_idx = nodes.get(&table.name).ok_or_else(|| format!("Table {} not found in nodes", table.name))?;
         for fk in &table.foreign_keys {
             if let Some(to_idx) = nodes.get(&fk.ref_table) {
                 // Kante von Ref-Tabelle zu aktueller Tabelle

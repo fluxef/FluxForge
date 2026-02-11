@@ -52,11 +52,32 @@ pub enum Commands {
         #[arg(long)]
         dry_run: bool,
 
-        /// Only migrate the structure, skip data transfer
         #[arg(long)]
-        schema_only: bool,
+        allow_destructive: bool,
+    },
+    Replicate {
+        /// MySQL source URL (required for data migration)
+        #[arg(long)]
+        source: Option<String>,
+
+        /// Path to internal schema JSON file
+        #[arg(long)]
+        schema: Option<PathBuf>,
+
+        /// PostgreSQL target URL
+        #[arg(long)]
+        target: String,
+
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// Output SQL statements without executing them
+        #[arg(long)]
+        dry_run: bool,
 
         #[arg(long)]
         allow_destructive: bool,
     },
+
+
 }

@@ -54,16 +54,18 @@ pub async fn handle_command(
             Ok(())
         }
 
+        // only schema diff, not data transfer
         Commands::Migrate {
             source,
             schema,
             target,
             config,
             dry_run,
-            schema_only,
             allow_destructive,
         } => {
 
+            let schema_only = true;
+            
             // In src/business.rs -> match command { Commands::Migrate { ... } }
 
             // 1. Konfiguration laden
@@ -130,6 +132,86 @@ pub async fn handle_command(
 
             Ok(())
         }
+        
+        // complete transfer of schema and data, target-db must exist and be empty 
+        Commands::Replicate {
+            source,
+            schema,
+            target,
+            config,
+            dry_run,
+            allow_destructive,
+        } => {
+
+            let schema_only = false;
+            
+            // In src/business.rs -> match command { Commands::Migrate { ... } }
+
+            // 1. Konfiguration laden
+            let forge_config = load_config(config.clone());
+
+            // 2. Schema beschaffen & Modus festlegen
+            let mut source_driver = None;
+            let (mut schema, can_migrate_data) = if let Some(path) = schema {
+                // --- Datei-Modus ---
+                let file = std::fs::File::open(&path)
+                    .map_err(|e| format!("Fehler beim Öffnen der Schema-Datei {:?}: {}", path, e))?;
+                let int_schema: ForgeSchema = serde_json::from_reader(std::io::BufReader::new(file))
+                    .map_err(|e| format!("Fehler beim Parsen der JSON-Datei: {}", e))?;
+
+                // In diesem Modus können keine Daten migriert werden
+                (int_schema, false)
+            } else {
+                // --- Live-Modus ---
+                let src_url = source.as_ref().unwrap(); // Durch Clap-Gruppe garantiert vorhanden
+                let s_driver = drivers::create_driver(src_url).await?;
+                let int_schema = s_driver.fetch_schema(&forge_config).await?;
+                source_driver = Some(s_driver);
+
+                // Hier ist eine Datenmigration theoretisch möglich
+                (int_schema, true)
+            };
+
+            // 3. Tabellen sortieren (Abhängigkeiten auflösen)
+            sort_tables_by_dependencies(&schema)
+                .map(|sorted| schema.tables = sorted)
+                .map_err(|e| format!("Abhängigkeitsfehler: {}", e))?;
+
+            // 4. Ziel-Treiber vorbereiten und Struktur anwenden
+            let target_driver = drivers::create_driver(&target).await?;
+
+            if !schema_only && can_migrate_data {
+                // FALL A: Struktur + Datenmigration
+                println!("🛡️ Sicherheitscheck: Prüfe Ziel-Datenbank auf vorhandene Daten...");
+                if target_driver.has_data(&schema).await? {
+                    return Err("❌ ABBRUCH: Die Zieldatenbank enthält bereits Daten. \
+                    Um Datenverlust zu vermeiden, führt FluxForge keine Migration in nicht-leere Datenbanken durch.".into());
+                }
+
+                // Wenn leer, dann Struktur anlegen und Daten schieben
+                target_driver.create_schema(&schema,&forge_config, !dry_run).await?;
+                if !dry_run {
+                    if let Some(s_driver) = source_driver {
+                        migrate_data(s_driver.as_ref(), target_driver.as_ref(), &schema, verbose).await?;
+                    }
+                }
+            } else {
+                // FALL B: Nur Struktur-Anpassung (--schema-only oder Datei-Modus)
+                println!("🔄 Modus: Struktur-Anpassung (In-Place Evolution).");
+
+                // Hier rufen wir create_schema auf.
+                // Der Postgres-Driver muss hier intern erkennen, ob er CREATE oder ALTER nutzt.
+                let statements = target_driver.create_schema(&schema, &forge_config, !dry_run).await?;
+
+                if dry_run {
+                    println!("📝 --- DRY RUN: Geplante Strukturänderungen ---");
+                    for sql in statements { println!("{}", sql); }
+                }
+            }
+
+            Ok(())
+        }
+
     }
 }
 

@@ -158,6 +158,39 @@ async fn test_build_mysql_add_and_modify_and_drop_column_sql() {
 }
 
 #[tokio::test]
+async fn test_modify_column_migration_float_default_comparison() {
+    let drv = mk_driver();
+
+    // Case 1: Float with identical numeric defaults, but different string formats
+    let mut c_src = col("f1", "float");
+    c_src.default = Some("1.0".to_string());
+    let mut c_dst = col("f1", "float");
+    c_dst.default = Some("1".to_string());
+
+    let sql1 = drv.modify_column_migration("t1", &c_src, &c_dst, false);
+    assert_eq!(sql1, "", "Numeric equality for float should not trigger migration");
+
+    // Case 2: Float with different numeric defaults
+    c_dst.default = Some("1.1".to_string());
+    let sql2 = drv.modify_column_migration("t1", &c_src, &c_dst, false);
+    assert!(sql2.contains("MODIFY COLUMN `f1` float"), "Numeric inequality should trigger migration");
+    assert!(sql2.contains("DEFAULT '1.1'"), "Should use dst default");
+
+    // Case 3: Other type (varchar) with identical string content, should not trigger
+    let mut v_src = col("v1", "varchar");
+    v_src.default = Some("1.0".to_string());
+    let mut v_dst = col("v1", "varchar");
+    v_dst.default = Some("1.0".to_string());
+    let sql3 = drv.modify_column_migration("t1", &v_src, &v_dst, false);
+    assert_eq!(sql3, "");
+
+    // Case 4: Other type (varchar) with different string formats, should trigger (as before)
+    v_dst.default = Some("1".to_string());
+    let sql4 = drv.modify_column_migration("t1", &v_src, &v_dst, false);
+    assert!(sql4.contains("MODIFY COLUMN `v1` varchar"), "String inequality should trigger migration for non-float");
+}
+
+#[tokio::test]
 async fn test_create_and_delete_table_migration_sql_and_indices() {
     let drv = mk_driver();
     let mut t = ForgeTable::new("users");

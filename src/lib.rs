@@ -1,6 +1,7 @@
 pub mod config;
 pub mod core;
 pub mod drivers;
+pub mod ops;
 
 // Re-export für bequemeren Zugriff: use fluxforge::ForgeSchema;
 use crate::core::ForgeConfig;

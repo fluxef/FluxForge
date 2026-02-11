@@ -472,11 +472,31 @@ impl MySqlDriver {
         dst_col: &ForgeColumn,
         _destructive: bool,
     ) -> String {
-        if src_col.data_type != dst_col.data_type
+        let mut changed = src_col.data_type != dst_col.data_type
             || src_col.length != dst_col.length
-            || src_col.is_nullable != dst_col.is_nullable
-            || src_col.default != dst_col.default
-        {
+            || src_col.is_nullable != dst_col.is_nullable;
+
+        // Spezialbehandlung für FLOAT: Numerischer Vergleich der Default-Werte
+        if !changed {
+            if src_col.data_type.eq_ignore_ascii_case("float") {
+                let src_def_f = src_col
+                    .default
+                    .as_ref()
+                    .and_then(|s| s.parse::<f64>().ok());
+                let dst_def_f = dst_col
+                    .default
+                    .as_ref()
+                    .and_then(|s| s.parse::<f64>().ok());
+
+                if src_def_f != dst_def_f {
+                    changed = true;
+                }
+            } else if src_col.default != dst_col.default {
+                changed = true;
+            }
+        }
+
+        if changed {
             let mut def = format!(
                 "ALTER TABLE `{}` MODIFY COLUMN `{}` {}",
                 table_name, dst_col.name, dst_col.data_type
@@ -687,7 +707,7 @@ impl DatabaseDriver for MySqlDriver {
                 success_count += 1;
             }
             if success_count > 0 {
-                println!("✅ {} SQL-Statements erfolgreich ausgeführt.", success_count);
+                println!("{} SQL-Statements erfolgreich ausgeführt.", success_count);
             }
         }
 

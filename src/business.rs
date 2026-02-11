@@ -1,11 +1,6 @@
 use crate::cli::Commands;
 use fluxforge::config::{get_config_file_path, load_config};
-use fluxforge::{drivers, DatabaseDriver, ForgeSchema, ForgeTable};
-use futures::StreamExt;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use petgraph::algo::toposort;
-use petgraph::graph::DiGraph;
-use std::collections::HashMap;
+use fluxforge::{drivers, ops, ForgeSchema};
 
 pub async fn handle_command(
     command: Commands,
@@ -93,7 +88,7 @@ pub async fn handle_command(
             };
 
             // Tabellen sortieren (Abhängigkeiten auflösen)
-            sort_tables_by_dependencies(&schema)
+            ops::sort_tables_by_dependencies(&schema)
                 .map(|sorted| schema.tables = sorted)
                 .map_err(|e| format!("Abhängigkeitsfehler: {}", e))?;
 
@@ -139,7 +134,7 @@ pub async fn handle_command(
             let mut source_schema = source_driver.fetch_schema(&forge_config).await?;
 
             // Tabellen sortieren (Abhängigkeiten auflösen)
-            sort_tables_by_dependencies(&source_schema)
+            ops::sort_tables_by_dependencies(&source_schema)
                 .map(|sorted| source_schema.tables = sorted)
                 .map_err(|e| format!("Abhängigkeitsfehler: {}", e))?;
 
@@ -155,7 +150,7 @@ pub async fn handle_command(
                 }
                 println!("--- DRY RUN END: Geplante Strukturänderungen ---");
             } else {
-                migrate_data(
+                ops::migrate_data(
                     source_driver.as_ref(),
                     target_driver.as_ref(),
                     &source_schema,
@@ -166,102 +161,6 @@ pub async fn handle_command(
             }
 
             Ok(())
-        }
-    }
-}
-
-pub async fn migrate_data(
-    source: &dyn DatabaseDriver,
-    target: &dyn DatabaseDriver,
-    schema: &ForgeSchema,
-    dry_run: bool,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let multi = MultiProgress::new();
-
-    // Style für die Schmiede-Anzeige
-    let style = ProgressStyle::with_template(
-        "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} rows ({msg}) {per_sec}"
-    )?
-        .progress_chars("#>-");
-
-    for table in &schema.tables {
-        // Wir wissen bei einem Stream oft nicht die Gesamtanzahl (len),
-        // es sei denn, wir machen vorher ein SELECT COUNT(*).
-        // Hier nutzen wir eine ProgressBar, die mitwächst.
-        let pb = multi.add(ProgressBar::new_spinner());
-        pb.set_style(style.clone());
-        pb.set_message(format!("Forging table: {}", table.name));
-
-        let mut data_stream = source.stream_table_data(&table.name).await?;
-        let mut chunk = Vec::with_capacity(1000);
-        let mut total_rows = 0;
-
-        while let Some(row_result) = data_stream.next().await {
-            let row = row_result?;
-            chunk.push(row);
-            total_rows += 1;
-
-            if chunk.len() >= 1000 {
-                target.insert_chunk(&table.name, chunk).await?;
-                chunk = Vec::with_capacity(1000);
-                pb.set_position(total_rows);
-            }
-        }
-
-        // Letzten Rest verarbeiten
-        if !chunk.is_empty() {
-            target.insert_chunk(&table.name, chunk).await?;
-            pb.set_position(total_rows);
-        }
-
-        pb.finish_with_message(format!("✅ Done: {} ({} rows)", table.name, total_rows));
-    }
-
-    Ok(())
-}
-
-pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTable>, String> {
-    let mut graph = DiGraph::<&str, ()>::new();
-    let mut nodes = HashMap::new();
-
-    // 1. Alle Tabellen als Knoten in den Graphen einfügen
-    for table in &schema.tables {
-        let node_idx = graph.add_node(&table.name);
-        nodes.insert(&table.name, node_idx);
-    }
-
-    // 2. Kanten (Edges) für Foreign Keys ziehen
-    for table in &schema.tables {
-        let from_idx = nodes
-            .get(&table.name)
-            .ok_or_else(|| format!("Table {} not found in nodes", table.name))?;
-        for fk in &table.foreign_keys {
-            if let Some(to_idx) = nodes.get(&fk.ref_table) {
-                // Kante von Ref-Tabelle zu aktueller Tabelle
-                // (Ref-Tabelle muss zuerst existieren)
-                graph.add_edge(*to_idx, *from_idx, ());
-            }
-        }
-    }
-
-    // 3. Topologisch sortieren
-    match toposort(&graph, None) {
-        Ok(sorted_indices) => {
-            let mut sorted_tables = Vec::new();
-            let table_map: HashMap<&str, &ForgeTable> =
-                schema.tables.iter().map(|t| (t.name.as_str(), t)).collect();
-
-            for idx in sorted_indices {
-                let name = graph[idx];
-                if let Some(table) = table_map.get(name) {
-                    sorted_tables.push((*table).clone());
-                }
-            }
-            Ok(sorted_tables)
-        }
-        Err(_) => {
-            Err("Circular dependency detected! Die Tabellen hängen im Kreis voneinander ab.".into())
         }
     }
 }

@@ -1,0 +1,18 @@
+# clippy.toml
+
+# Erlaube etwas komplexere Funktionen (Standard ist oft zu streng für Parser/Migrationen)
+too-many-lines-threshold = 150
+too-many-arguments-threshold = 7
+
+# Verhindere, dass man versehentlich Float-Vergleiche macht (wichtig für 'decimal')
+allow-expect-in-tests = true
+
+# Ignoriere bestimmte Wörter in Variablennamen (z.B. wenn die DB-Spalte 'id_raw' heißt)
+disallowed-names = ["toto", "tata", "foo"]
+
+# Setze ein Limit für die kognitive Komplexität (hilft, verschachtelte Match-Blocks zu vermeiden)
+cognitive-complexity-threshold = 20
+
+# Warnen, wenn Strings mit + statt format! zusammengefügt werden
+# (Performance-Check für deine SQL-String-Generierung)
+msrv = "1.70.0" # Minimum Supported Rust Version

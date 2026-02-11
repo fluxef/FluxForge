@@ -174,7 +174,7 @@ impl MySqlDriver {
     }
 
     /// Extrahiert 'val1','val2' aus enum('val1','val2')
-    fn parse_mysql_enum_values(&self, col_type: &str) -> Vec<String> {
+    pub fn parse_mysql_enum_values(&self, col_type: &str) -> Vec<String> {
         col_type
             .trim_start_matches("enum(")
             .trim_end_matches(')')
@@ -236,7 +236,7 @@ impl MySqlDriver {
         Ok(Vec::new())
     }
 
-    fn field_migration_sql(&self, field: ForgeColumn) -> String {
+    pub fn field_migration_sql(&self, field: ForgeColumn) -> String {
 
         let binding = field.data_type.to_lowercase();
         let sql_type = match binding.as_str() {
@@ -319,7 +319,7 @@ impl MySqlDriver {
     }
 
     /// Generiert das CREATE TABLE Statement für MySQL
-    fn build_mysql_create_table_sql(&self, table: &ForgeTable) -> String {
+    pub fn build_mysql_create_table_sql(&self, table: &ForgeTable) -> String {
         let mut col_defs = Vec::new();
         let mut pks = Vec::new();
 
@@ -343,7 +343,7 @@ impl MySqlDriver {
         )
     }
 
-    fn create_table_migration_sql(
+    pub fn create_table_migration_sql(
         &self,
         dst_table: &ForgeTable,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -358,14 +358,14 @@ impl MySqlDriver {
         Ok(stmts)
     }
 
-    fn delete_table_migration_sql(
+    pub fn delete_table_migration_sql(
         &self,
         dst_table: &ForgeTable,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let sql = format!("DROP TABLE `{}`;", dst_table.name);
         Ok(vec![sql])
     }
-    fn alter_table_migration_sql(
+    pub fn alter_table_migration_sql(
         &self,
         src_table: &ForgeTable,
         dst_table: &ForgeTable,
@@ -454,18 +454,18 @@ impl MySqlDriver {
         Ok(all_statements)
     }
 
-    fn add_column_migration(&self, table_name: &str, dst_col: &ForgeColumn) -> String {
+    pub fn add_column_migration(&self, table_name: &str, dst_col: &ForgeColumn) -> String {
         self.build_mysql_add_column_sql(table_name, dst_col)
     }
 
-    fn drop_column_migration(&self, table_name: &str, src_col: &ForgeColumn) -> String {
+    pub fn drop_column_migration(&self, table_name: &str, src_col: &ForgeColumn) -> String {
         format!(
             "ALTER TABLE `{}` DROP COLUMN `{}`;",
             table_name, src_col.name
         )
     }
 
-    fn modify_column_migration(
+    pub fn modify_column_migration(
         &self,
         table_name: &str,
         src_col: &ForgeColumn,
@@ -496,7 +496,7 @@ impl MySqlDriver {
     }
 
     /// Generiert ein ALTER TABLE ADD COLUMN Statement
-    fn build_mysql_add_column_sql(&self, table_name: &str, col: &ForgeColumn) -> String {
+    pub fn build_mysql_add_column_sql(&self, table_name: &str, col: &ForgeColumn) -> String {
         let mut def = format!(
             "ALTER TABLE `{}` ADD COLUMN `{}` {}",
             table_name, col.name, col.data_type
@@ -514,7 +514,7 @@ impl MySqlDriver {
     }
 
     /// Generiert ein CREATE INDEX Statement
-    fn build_mysql_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
+    pub fn build_mysql_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
         let unique = if index.is_unique { "UNIQUE " } else { "" };
         let cols = index
             .columns
@@ -529,12 +529,12 @@ impl MySqlDriver {
     }
 
     /// Generiert ein DROP INDEX Statement
-    fn build_mysql_drop_index_sql(&self, table_name: &str, index_name: &str) -> String {
+    pub fn build_mysql_drop_index_sql(&self, table_name: &str, index_name: &str) -> String {
         format!("DROP INDEX `{}` ON `{}`;", index_name, table_name)
     }
 
     /// Prüft, ob zwei Indizes identisch sind (Name außen vor, da über Map-Schlüssel geprüft)
-    fn indices_equal(&self, a: &ForgeIndex, b: &ForgeIndex) -> bool {
+    pub fn indices_equal(&self, a: &ForgeIndex, b: &ForgeIndex) -> bool {
         if a.is_unique != b.is_unique {
             return false;
         }
@@ -551,7 +551,7 @@ impl MySqlDriver {
 
     /// Liest eine Spalte an einem bestimmten Index sicher als String,
     /// auch wenn MySQL VARBINARY oder BLOB zurückgibt.
-    fn get_string_at_index(&self, row: &sqlx::mysql::MySqlRow, index: usize) -> Option<String> {
+    pub fn get_string_at_index(&self, row: &sqlx::mysql::MySqlRow, index: usize) -> Option<String> {
         // Versuche, die Spalte als Byte-Vektor zu lesen
         let bytes: Vec<u8> = row.try_get(index).unwrap_or_default();
 
@@ -681,8 +681,13 @@ impl DatabaseDriver for MySqlDriver {
         }
 
         if !dry_run {
+            let mut success_count = 0;
             for sql in &all_statements {
                 sqlx::query(sql).execute(&self.pool).await?;
+                success_count += 1;
+            }
+            if success_count > 0 {
+                println!("✅ {} SQL-Statements erfolgreich ausgeführt.", success_count);
             }
         }
 

@@ -82,7 +82,9 @@ pub async fn handle_command(
                 int_schema
             } else {
                 // --- Live-Modus ---
-                let src_url = source.as_ref().ok_or("Source URL is required in live mode")?;
+                let src_url = source
+                    .as_ref()
+                    .ok_or("Source URL is required in live mode")?;
                 let s_driver = drivers::create_driver(src_url).await?;
                 let int_schema = s_driver.fetch_schema(&forge_config).await?;
                 source_driver = Some(s_driver);
@@ -231,7 +233,9 @@ pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTabl
 
     // 2. Kanten (Edges) für Foreign Keys ziehen
     for table in &schema.tables {
-        let from_idx = nodes.get(&table.name).ok_or_else(|| format!("Table {} not found in nodes", table.name))?;
+        let from_idx = nodes
+            .get(&table.name)
+            .ok_or_else(|| format!("Table {} not found in nodes", table.name))?;
         for fk in &table.foreign_keys {
             if let Some(to_idx) = nodes.get(&fk.ref_table) {
                 // Kante von Ref-Tabelle zu aktueller Tabelle

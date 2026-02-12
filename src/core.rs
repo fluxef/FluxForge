@@ -6,8 +6,8 @@ use std::collections::HashMap;
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ForgeConfig {
     pub general: Option<ForgeGeneralConfig>,
-    pub mysql: Option<ForgeDbTypeConfig>,
-    pub postgres: Option<ForgeDbTypeConfig>,
+    pub mysql: Option<ForgeDbConfig>,
+    pub postgres: Option<ForgeDbConfig>,
     pub rules: Option<ForgeRulesConfig>,
     pub tables: Option<ForgeTableConfig>,
 }
@@ -39,15 +39,34 @@ impl ForgeConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ForgeDbTypeConfig {
-    pub types: Option<ForgeDirectionConfig>,
+pub struct ForgeDbConfig {
+    pub types: Option<ForgeTypeDirectionConfig>,
+    pub rules: Option<ForgeRulesDirectionConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ForgeDirectionConfig {
+pub struct ForgeTypeConfig {
+    pub types: Option<ForgeTypeDirectionConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ForgeTypeDirectionConfig {
     pub on_read: Option<HashMap<String, String>>,
     pub on_write: Option<HashMap<String, String>>,
 }
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ForgeRulesDirectionConfig {
+    pub on_read: Option<ForgeRuleGeneralConfig>,
+    pub on_write: Option<ForgeRuleGeneralConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ForgeRuleGeneralConfig {
+    pub unsigned_int_to_bigint: Option<bool>,
+    pub nullify_invalid_dates: Option<bool>,
+}
+
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ForgeGeneralConfig {
     pub on_missing_type: Option<String>,
@@ -56,7 +75,7 @@ pub struct ForgeGeneralConfig {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ForgeRulesConfig {
-    pub nullify_invalid_dates: Option<bool>,
+    pub rules: Option<ForgeRulesDirectionConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -115,6 +134,7 @@ pub struct ForgeColumn {
     pub scale: Option<u32>,
     pub is_nullable: bool,
     pub is_primary_key: bool,
+    pub is_unsigned: bool,
     pub auto_increment: bool,
     pub default: Option<String>,
     pub comment: Option<String>,

@@ -46,6 +46,42 @@ impl MySqlDriver {
         Ok(tables)
     }
 
+    pub fn map_mysql_type(
+        &self,
+        mysql_column_type: &str,
+        mysql_data_type: &str,
+        is_unsigned: bool,
+        config: &ForgeConfig,
+    ) -> String {
+        let target_types = config.get_type_list("mysql", "on_read");
+        let mysql_column_type_lower = mysql_column_type.to_lowercase();
+        let mysql_data_type_lower = mysql_data_type.to_lowercase();
+
+        let mut target_type = target_types
+            .and_then(|t| {
+                t.get(&mysql_column_type_lower)
+                    .or_else(|| t.get(&mysql_data_type_lower))
+            })
+            .cloned()
+            .unwrap_or(mysql_data_type_lower.clone());
+
+        // Unsigned Regel anwenden (basierend auf der neuen Struktur)
+        if let Some(mysql_cfg) = &config.mysql {
+            if let Some(rules) = &mysql_cfg.rules {
+                if let Some(on_read) = &rules.on_read {
+                    if on_read.unsigned_int_to_bigint.unwrap_or(false)
+                        && is_unsigned
+                        && mysql_data_type_lower.contains("int")
+                    {
+                        target_type = "bigint".to_string();
+                    }
+                }
+            }
+        }
+
+        target_type
+    }
+
     async fn fetch_columns(
         &self,
         table_name: &str,
@@ -59,6 +95,14 @@ impl MySqlDriver {
         let mut columns = Vec::new();
         let target_types = config.get_type_list("mysql", "on_read");
 
+        let unsigned_int_to_bigint = config.mysql
+            .as_ref()
+            .and_then(|c| c.rules.as_ref())
+            .and_then(|r| r.on_read.as_ref())
+            .and_then(|o| o.unsigned_int_to_bigint)
+            .unwrap_or(false);
+
+
         for row in rows {
             // Hilfsfunktion zum sicheren Lesen von (VAR)BINARY Metadaten
             let get_s = |col: &str| -> String {
@@ -70,16 +114,15 @@ impl MySqlDriver {
             let col_name = get_s("Field").to_string();
             let mysql_column_type = get_s("Type"); // z.B. "int(11) unsigned" oder "enum('a','b')"
 
-            // Extrahiere den reinen Datentyp (alles vor der ersten Klammer)
+            // Extrahiere den reinen Datentyp für Enum-Check etc.
             let mysql_data_type = mysql_column_type
-                .split('(') // Teilt beim (
-                .next() // Nimmt den ersten Teil
-                .map(|s| s.trim()) // Entfernt Leerzeichen (" integer " -> "integer")
-                .unwrap_or(mysql_column_type.trim()) // Fallback ebenfalls getrimmt
-                .to_lowercase(); // Umwandlung in Kleinschreibung
+                .split(|c| c == '(' || c == ' ')
+                .next()
+                .unwrap_or(&mysql_column_type)
+                .to_lowercase();
 
             // START MAPPING LOGIK
-            let target_data_type = target_types
+            let mut target_data_type = target_types
                 .and_then(|t| {
                     t.get(&mysql_column_type)
                         .or_else(|| t.get(&mysql_data_type))
@@ -87,6 +130,23 @@ impl MySqlDriver {
                 .cloned()
                 .unwrap_or(mysql_data_type.clone());
             // END MAPPING LOGIK
+
+            // START Unsigned Regel anwenden
+            // WENN wir auf bigint mappen, setzen wir is_unsigned auf false
+            // weil wir das nicht mehr brauchen
+            // nur wenn wir nicht auf bigint mappen behalten wir es, weil wir dann
+            // nicht nach postgres (internes format) gehen
+            // und das evtl. wieder für das zurückschreiben nach mysql brauchen
+            let mut is_unsigned = mysql_column_type.to_lowercase().contains("unsigned");
+
+            if mysql_data_type.contains("int")
+                && is_unsigned
+                && unsigned_int_to_bigint
+            {
+                target_data_type = "bigint".to_string();
+                is_unsigned=false;
+            }
+            // ENDE Unsigned Regel anwenden
 
             // Enum-Werte extrahieren, falls vorhanden
             let enum_values = if mysql_data_type == "enum" {
@@ -147,6 +207,7 @@ impl MySqlDriver {
                 scale: scale,
                 is_nullable: get_s("Null") == "YES",
                 is_primary_key: get_s("Key") == "PRI",
+                is_unsigned,
                 auto_increment: extra.contains("auto_increment"),
                 default: row
                     .try_get::<Option<Vec<u8>>, _>("Default")
@@ -374,8 +435,13 @@ impl MySqlDriver {
         for dst_col in &dst_table.columns {
             if let Some(src_col) = src_cols.get(&dst_col.name) {
                 // WENN eine ForgeColumn in beiden vorkommt -> modify_column_migration_sql()
-                let sql =
-                    self.modify_column_migration(&dst_table.name, src_col, dst_col, config, destructive);
+                let sql = self.modify_column_migration(
+                    &dst_table.name,
+                    src_col,
+                    dst_col,
+                    config,
+                    destructive,
+                );
                 if !sql.is_empty() {
                     all_statements.push(sql);
                 }
@@ -440,7 +506,12 @@ impl MySqlDriver {
         Ok(all_statements)
     }
 
-    pub fn add_column_migration(&self, table_name: &str, dst_col: &ForgeColumn, config: &ForgeConfig) -> String {
+    pub fn add_column_migration(
+        &self,
+        table_name: &str,
+        dst_col: &ForgeColumn,
+        config: &ForgeConfig,
+    ) -> String {
         self.build_mysql_add_column_sql(table_name, dst_col, config)
     }
 
@@ -486,7 +557,12 @@ impl MySqlDriver {
     }
 
     /// Generiert ein ALTER TABLE ADD COLUMN Statement
-    pub fn build_mysql_add_column_sql(&self, table_name: &str, col: &ForgeColumn, config: &ForgeConfig) -> String {
+    pub fn build_mysql_add_column_sql(
+        &self,
+        table_name: &str,
+        col: &ForgeColumn,
+        config: &ForgeConfig,
+    ) -> String {
         let sql_def = self.field_migration_sql(col.clone(), config);
         format!("ALTER TABLE `{}` ADD COLUMN {};", table_name, sql_def)
     }
@@ -628,7 +704,8 @@ impl DatabaseDriver for MySqlDriver {
         for table in &source_schema.tables {
             if let Some(target_table) = target_tables.get(&table.name) {
                 // WENN tabelle in source_schema und target_schema -> alter_table_migration_sql()
-                let stmts = self.alter_table_migration_sql(target_table, table, config, destructive)?;
+                let stmts =
+                    self.alter_table_migration_sql(target_table, table, config, destructive)?;
                 all_statements.extend(stmts);
             } else {
                 // WENN tabelle in target_schema, aber nicht in source_schema -> create_table_migration_sql()
@@ -656,9 +733,8 @@ impl DatabaseDriver for MySqlDriver {
                 sqlx::query(sql).execute(&self.pool).await?;
                 success_count += 1;
             }
-            if success_count > 0 {
-                println!("{} SQL-Statements erfolgreich ausgeführt.", success_count);
-            }
+
+            println!("{} SQL-Statements erfolgreich ausgeführt.", success_count);
         }
 
         Ok(all_statements)

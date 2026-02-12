@@ -9,9 +9,9 @@ default_charset = "utf8mb4"
 # Von MySQL-Typ zu internem Typ (Postgres)
 "integer" = "int"
 "timestamp" = "datetimetz"
-"unsigned int" = "bigint"
-"unsigned integer" = "bigint"
 
+[mysql.rules.on_read]
+unsigned_int_to_bigint = true
 
 [mysql.types.on_write]
 # Von internem Typ (Postgres) zu MySQL-Typ
@@ -20,7 +20,6 @@ default_charset = "utf8mb4"
 "biginteger" = "bigint"
 "text" = "longtext"
 "blob" = "longblob"
-
 
 # --- Postgres Sektion ---
 [postgres.types.on_read]

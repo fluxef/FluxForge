@@ -1,5 +1,9 @@
 use fluxforge::drivers::MySqlDriver;
-use fluxforge::core::{ForgeColumn, ForgeConfig, ForgeIndex, ForgeTable};
+use fluxforge::core::{
+    ForgeColumn, ForgeConfig, ForgeDbConfig, ForgeIndex, ForgeRuleGeneralConfig,
+    ForgeRulesDirectionConfig, ForgeTable, ForgeTypeDirectionConfig,
+};
+use std::collections::HashMap;
 
 // sqlx lazy pool imports (no real DB connection attempted)
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
@@ -256,4 +260,127 @@ async fn test_alter_table_migration_sql_columns_and_indices() {
     // With destructive: legacy column and idx_old should be dropped
     assert!(stmts_destructive.iter().any(|s| s == "ALTER TABLE `users` DROP COLUMN `legacy`;"));
     assert!(stmts_destructive.iter().any(|s| s == "DROP INDEX `idx_old` ON `users`;"));
+}
+
+#[tokio::test]
+async fn test_fetch_columns_mapping_logic() {
+    let drv = mk_driver();
+
+    // Simuliere config.toml:
+    // [mysql.types.on_read]
+    // "integer" = "int"
+    // "timestamp" = "datetimetz"
+    // "unsigned int" = "bigint"
+    // "unsigned integer" = "bigint"
+    //
+    // [mysql.rules.on_read]
+    // unsigned_int_to_bigint = true
+
+    let mut on_read = HashMap::new();
+    on_read.insert("integer".to_string(), "int".to_string());
+    on_read.insert("timestamp".to_string(), "datetimetz".to_string());
+    on_read.insert("unsigned int".to_string(), "bigint".to_string());
+    on_read.insert("unsigned integer".to_string(), "bigint".to_string());
+
+    let config = ForgeConfig {
+        mysql: Some(ForgeDbConfig {
+            types: Some(ForgeTypeDirectionConfig {
+                on_read: Some(on_read),
+                on_write: None,
+            }),
+            rules: Some(ForgeRulesDirectionConfig {
+                on_read: Some(ForgeRuleGeneralConfig {
+                    unsigned_int_to_bigint: Some(true),
+                    ..Default::default()
+                }),
+                on_write: None,
+            }),
+        }),
+        ..Default::default()
+    };
+
+    // Testfälle für "int" Varianten
+    // 1. "int" (nicht im Mapping -> bleibt "int")
+    assert_eq!(drv.map_mysql_type("int", "int", false, &config), "int");
+
+    // 2. "integer" (gemappt auf "int")
+    assert_eq!(drv.map_mysql_type("integer", "integer", false, &config), "int");
+
+    // 3. "unsigned int" (gemappt auf "bigint" via types)
+    assert_eq!(
+        drv.map_mysql_type("unsigned int", "unsigned int", true, &config),
+        "bigint"
+    );
+
+    // 4. "unsigned integer" (gemappt auf "bigint" via types)
+    assert_eq!(
+        drv.map_mysql_type("unsigned integer", "unsigned integer", true, &config),
+        "bigint"
+    );
+
+    // 5. "bigint" (nicht im Mapping -> bleibt "bigint")
+    assert_eq!(drv.map_mysql_type("bigint", "bigint", false, &config), "bigint");
+
+    // 6. "int(11) unsigned" (Basis "int", Regel unsigned_int_to_bigint greift -> "bigint")
+    assert_eq!(
+        drv.map_mysql_type("int(11) unsigned", "int", true, &config),
+        "bigint"
+    );
+
+    // 7. "timestamp" (gemappt auf "datetimetz")
+    assert_eq!(
+        drv.map_mysql_type("timestamp", "timestamp", false, &config),
+        "datetimetz"
+    );
+
+    // 8. Ohne die Regel
+    let mut config_no_rules = config.clone();
+    config_no_rules.mysql.as_mut().unwrap().rules = None;
+    assert_eq!(
+        drv.map_mysql_type("int(11) unsigned", "int", true, &config_no_rules),
+        "int"
+    );
+
+    // 9. Regel an, aber is_unsigned ist false (darf NICHT bigint werden)
+    assert_eq!(
+        drv.map_mysql_type("int", "int", false, &config),
+        "int"
+    );
+}
+
+#[tokio::test]
+async fn test_map_mysql_type_unsigned_matrix() {
+    let drv = mk_driver();
+
+    let mut config = ForgeConfig::default();
+    config.mysql = Some(ForgeDbConfig {
+        rules: Some(ForgeRulesDirectionConfig {
+            on_read: Some(ForgeRuleGeneralConfig {
+                unsigned_int_to_bigint: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+
+    // Matrix Test für "int"
+    
+    // 1. Regel=true, is_unsigned=true -> bigint
+    assert_eq!(drv.map_mysql_type("int(11) unsigned", "int", true, &config), "bigint");
+    
+    // 2. Regel=true, is_unsigned=false -> int
+    assert_eq!(drv.map_mysql_type("int(11)", "int", false, &config), "int");
+
+    // Regel auf false setzen
+    config.mysql.as_mut().unwrap().rules.as_mut().unwrap().on_read.as_mut().unwrap().unsigned_int_to_bigint = Some(false);
+
+    // 3. Regel=false, is_unsigned=true -> int
+    assert_eq!(drv.map_mysql_type("int(11) unsigned", "int", true, &config), "int");
+
+    // 4. Regel=false, is_unsigned=false -> int
+    assert_eq!(drv.map_mysql_type("int(11)", "int", false, &config), "int");
+    
+    // Bonus: bigint bleibt bigint egal was
+    assert_eq!(drv.map_mysql_type("bigint unsigned", "bigint", true, &config), "bigint");
 }

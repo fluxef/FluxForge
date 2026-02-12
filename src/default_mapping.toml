@@ -1,1 +1,33 @@
+# --- MySQL Sektion ---
+
+[mysql.general]
+# Standard-Verhalten für unbekannte Typen
+on_missing_type = "warn" # oder "error"
+default_charset = "utf8mb4"
+
+[mysql.types.on_read]
+# Von MySQL-Typ zu internem Typ (Postgres)
+"integer" = "int"
+"timestamp" = "datetimetz"
+"unsigned int" = "bigint"
+"unsigned integer" = "bigint"
+
+
+[mysql.types.on_write]
+# Von internem Typ (Postgres) zu MySQL-Typ
+"integer" = "int"
+"datetimetz" = "timestamp"
+"biginteger" = "bigint"
+"text" = "longtext"
+"blob" = "longblob"
+
+
+# --- Postgres Sektion ---
+[postgres.types.on_read]
+"serial" = "int"
+"timestamptz" = "datetimetz"
+
+[postgres.types.on_write]
+"int" = "serial"
+"datetimetz" = "timestamptz"
 

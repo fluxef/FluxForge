@@ -1,5 +1,5 @@
 use fluxforge::drivers::MySqlDriver;
-use fluxforge::core::{ForgeColumn, ForgeIndex, ForgeTable};
+use fluxforge::core::{ForgeColumn, ForgeConfig, ForgeIndex, ForgeTable};
 
 // sqlx lazy pool imports (no real DB connection attempted)
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
@@ -10,6 +10,10 @@ fn mk_driver() -> MySqlDriver {
     let opts = MySqlConnectOptions::from_str("mysql://user:pass@localhost:3306/testdb").unwrap();
     let pool = MySqlPoolOptions::new().connect_lazy_with(opts);
     MySqlDriver { pool }
+}
+
+fn mk_config() -> ForgeConfig {
+    ForgeConfig::default()
 }
 
 fn col(name: &str, data_type: &str) -> ForgeColumn {
@@ -67,18 +71,18 @@ async fn test_build_create_index_and_drop_index_sql() {
 async fn test_field_migration_sql_variants() {
     let drv = mk_driver();
 
-    // integer -> int NOT NULL DEFAULT '0'
-    let mut c1 = col("id", "integer");
+    // integer -> integer (no fallback anymore)
+    let mut c1 = col("id", "int");
     c1.is_nullable = false;
     c1.default = Some("0".to_string());
-    let sql1 = drv.field_migration_sql(c1);
+    let sql1 = drv.field_migration_sql(c1, &mk_config());
     assert_eq!(sql1, "`id` int NOT NULL DEFAULT '0'");
 
     // varchar with length and NULL DEFAULT NULL
     let mut c2 = col("name", "varchar");
     c2.length = Some(255);
     c2.is_nullable = true;
-    let sql2 = drv.field_migration_sql(c2);
+    let sql2 = drv.field_migration_sql(c2, &mk_config());
     assert_eq!(sql2, "`name` varchar(255) NULL DEFAULT NULL");
 
     // decimal(10,2) NOT NULL DEFAULT '0.00'
@@ -87,21 +91,21 @@ async fn test_field_migration_sql_variants() {
     c3.scale = Some(2);
     c3.is_nullable = false;
     c3.default = Some("0.00".to_string());
-    let sql3 = drv.field_migration_sql(c3);
+    let sql3 = drv.field_migration_sql(c3, &mk_config());
     assert_eq!(sql3, "`price` decimal(10,2) NOT NULL DEFAULT '0.00'");
 
     // enum('a','b')
     let mut c4 = col("state", "enum");
     c4.enum_values = Some(vec!["a".into(), "b".into()]);
     c4.is_nullable = true;
-    let sql4 = drv.field_migration_sql(c4);
+    let sql4 = drv.field_migration_sql(c4, &mk_config());
     assert_eq!(sql4, "`state` enum('a','b') NULL DEFAULT NULL");
 
     // auto_increment
     let mut c5 = col("id", "int");
     c5.is_nullable = false;
     c5.auto_increment = true;
-    let sql5 = drv.field_migration_sql(c5);
+    let sql5 = drv.field_migration_sql(c5, &mk_config());
     assert_eq!(sql5, "`id` int NOT NULL AUTO_INCREMENT");
 
     // CURRENT_TIMESTAMP default with ON UPDATE CURRENT_TIMESTAMP per implementation
@@ -109,7 +113,7 @@ async fn test_field_migration_sql_variants() {
     c6.is_nullable = true;
     c6.default = Some("current_timestamp".into());
     c6.on_update = Some("CURRENT_TIMESTAMP".into());
-    let sql6 = drv.field_migration_sql(c6);
+    let sql6 = drv.field_migration_sql(c6, &mk_config());
     assert_eq!(sql6, "`updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
 }
 
@@ -128,7 +132,7 @@ async fn test_build_mysql_create_table_sql_with_pk() {
     name.is_nullable = true;
     t.columns.push(name);
 
-    let sql = drv.build_mysql_create_table_sql(&t);
+    let sql = drv.build_mysql_create_table_sql(&t, &mk_config());
     assert!(sql.starts_with("CREATE TABLE `users` ("));
     assert!(sql.contains("`id` int NOT NULL"));
     assert!(sql.contains("`name` varchar(100) NULL DEFAULT NULL"));
@@ -143,14 +147,14 @@ async fn test_build_mysql_add_and_modify_and_drop_column_sql() {
     new_col.is_nullable = false;
     new_col.default = Some("0".into());
 
-    let add_sql = drv.build_mysql_add_column_sql("users", &new_col);
+    let add_sql = drv.build_mysql_add_column_sql("users", &new_col, &mk_config());
     assert_eq!(add_sql, "ALTER TABLE `users` ADD COLUMN `age` int NOT NULL DEFAULT '0';");
 
     let mut old_col = col("age", "varchar");
     old_col.is_nullable = true;
 
     // expect MODIFY to int NOT NULL DEFAULT '0'
-    let modify_sql = drv.modify_column_migration("users", &old_col, &new_col, true);
+    let modify_sql = drv.modify_column_migration("users", &old_col, &new_col, &mk_config(), true);
     assert_eq!(modify_sql, "ALTER TABLE `users` MODIFY COLUMN `age` int NOT NULL DEFAULT '0';");
 
     let drop_sql = drv.drop_column_migration("users", &old_col);
@@ -167,12 +171,12 @@ async fn test_modify_column_migration_float_default_comparison() {
     let mut c_dst = col("f1", "float");
     c_dst.default = Some("1".to_string());
 
-    let sql1 = drv.modify_column_migration("t1", &c_src, &c_dst, false);
+    let sql1 = drv.modify_column_migration("t1", &c_src, &c_dst, &mk_config(), false);
     assert_eq!(sql1, "", "Numeric equality for float should not trigger migration");
 
     // Case 2: Float with different numeric defaults
     c_dst.default = Some("1.1".to_string());
-    let sql2 = drv.modify_column_migration("t1", &c_src, &c_dst, false);
+    let sql2 = drv.modify_column_migration("t1", &c_src, &c_dst, &mk_config(), false);
     assert!(sql2.contains("MODIFY COLUMN `f1` float"), "Numeric inequality should trigger migration");
     assert!(sql2.contains("DEFAULT '1.1'"), "Should use dst default");
 
@@ -181,12 +185,12 @@ async fn test_modify_column_migration_float_default_comparison() {
     v_src.default = Some("1.0".to_string());
     let mut v_dst = col("v1", "varchar");
     v_dst.default = Some("1.0".to_string());
-    let sql3 = drv.modify_column_migration("t1", &v_src, &v_dst, false);
+    let sql3 = drv.modify_column_migration("t1", &v_src, &v_dst, &mk_config(), false);
     assert_eq!(sql3, "");
 
     // Case 4: Other type (varchar) with different string formats, should trigger (as before)
     v_dst.default = Some("1".to_string());
-    let sql4 = drv.modify_column_migration("t1", &v_src, &v_dst, false);
+    let sql4 = drv.modify_column_migration("t1", &v_src, &v_dst, &mk_config(), false);
     assert!(sql4.contains("MODIFY COLUMN `v1` varchar"), "String inequality should trigger migration for non-float");
 }
 
@@ -204,7 +208,7 @@ async fn test_create_and_delete_table_migration_sql_and_indices() {
 
     t.indices.push(idx("u_email", &["email"], true));
 
-    let stmts = drv.create_table_migration_sql(&t).unwrap();
+    let stmts = drv.create_table_migration_sql(&t, &mk_config()).unwrap();
     assert_eq!(stmts.len(), 2, "should contain CREATE TABLE and CREATE INDEX");
     assert!(stmts[0].starts_with("CREATE TABLE `users`"));
     assert_eq!(stmts[1], "CREATE UNIQUE INDEX `u_email` ON `users` (`email`);");
@@ -239,7 +243,7 @@ async fn test_alter_table_migration_sql_columns_and_indices() {
     // indices: replace idx_old with new, and add unique on name
     dst.indices.push(idx("u_name", &["name"], true)); // new index
 
-    let stmts_non_destructive = drv.alter_table_migration_sql(&src, &dst, false).unwrap();
+    let stmts_non_destructive = drv.alter_table_migration_sql(&src, &dst, &mk_config(), false).unwrap();
     // Expect: modify id (to add NOT NULL), add column name, create index u_name
     assert!(stmts_non_destructive.iter().any(|s| s == "ALTER TABLE `users` MODIFY COLUMN `id` int NOT NULL;"));
     assert!(stmts_non_destructive.iter().any(|s| s == "ALTER TABLE `users` ADD COLUMN `name` varchar(150);" || s == "ALTER TABLE `users` ADD COLUMN `name` varchar(150) NULL DEFAULT NULL;"));
@@ -248,7 +252,7 @@ async fn test_alter_table_migration_sql_columns_and_indices() {
     assert!(!stmts_non_destructive.iter().any(|s| s.contains("DROP COLUMN `legacy`")));
     assert!(!stmts_non_destructive.iter().any(|s| s.contains("DROP INDEX `idx_old`")));
 
-    let stmts_destructive = drv.alter_table_migration_sql(&src, &dst, true).unwrap();
+    let stmts_destructive = drv.alter_table_migration_sql(&src, &dst, &mk_config(), true).unwrap();
     // With destructive: legacy column and idx_old should be dropped
     assert!(stmts_destructive.iter().any(|s| s == "ALTER TABLE `users` DROP COLUMN `legacy`;"));
     assert!(stmts_destructive.iter().any(|s| s == "DROP INDEX `idx_old` ON `users`;"));

@@ -17,9 +17,11 @@ pub async fn handle_command(
             // Konfiguration laden (Nutzt Standard, wenn keine Datei angegeben)
             let forge_config = load_config(config.clone())?;
             if verbose {
+                let mysql_count = forge_config.mysql.as_ref().and_then(|m| m.types.as_ref()).and_then(|t| t.on_read.as_ref()).map(|t| t.len()).unwrap_or(0);
+                let pg_count = forge_config.postgres.as_ref().and_then(|m| m.types.as_ref()).and_then(|t| t.on_read.as_ref()).map(|t| t.len()).unwrap_or(0);
                 println!(
-                    "Configuration loaded (using Mappings for {} types)",
-                    forge_config.types.as_ref().map(|t| t.len()).unwrap_or(0)
+                    "Configuration loaded (Mappings: MySQL={}, Postgres={})",
+                    mysql_count, pg_count
                 );
             }
 
@@ -43,14 +45,14 @@ pub async fn handle_command(
             let file = std::fs::File::create(&schema)?;
             serde_json::to_writer_pretty(file, &extracted_schema)?;
 
-            println!("💾 Schema successfully forged and saved to: {:?}", schema);
+            println!("Schema successfully forged and saved to: {:?}", schema);
 
             Ok(())
         }
 
-        // only schema diff, not data transfer
-        // target-db must exist and but can be
-        // schema-file can be omitted, in which case source-db is used
+        // only schema diff, NO DATA TRANSFER
+        // target-db must exist and but can be non-empty
+        // schema-file can be omitted, in which case source-db is used which then becomes mandatory
         Commands::Migrate {
             source,
             schema,
@@ -59,14 +61,13 @@ pub async fn handle_command(
             dry_run,
             allow_destructive,
         } => {
-            // Konfiguration laden
+
             let forge_config = load_config(config.clone())?;
 
-            // Schema beschaffen & Modus festlegen
             let mut source_driver = None;
 
             let mut schema = if let Some(path) = schema {
-                // --- Datei-Modus ---
+                // reading schema from file
                 let file = std::fs::File::open(&path).map_err(|e| {
                     format!("Fehler beim Öffnen der Schema-Datei {:?}: {}", path, e)
                 })?;
@@ -76,7 +77,7 @@ pub async fn handle_command(
 
                 int_schema
             } else {
-                // --- Live-Modus ---
+                // reading schema from live source database
                 let src_url = source
                     .as_ref()
                     .ok_or("Source URL is required in live mode")?;
@@ -140,7 +141,7 @@ pub async fn handle_command(
 
             // target schema in DB erstellen
             let statements = target_driver
-                .create_schema(&source_schema, &forge_config, dry_run)
+                .diff_schema(&source_schema, &forge_config, dry_run,true)
                 .await?;
 
             if dry_run {

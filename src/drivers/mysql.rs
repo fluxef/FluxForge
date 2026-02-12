@@ -57,6 +57,8 @@ impl MySqlDriver {
         let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
 
         let mut columns = Vec::new();
+        let target_types = config.get_type_list("mysql", "on_read");
+
         for row in rows {
             // Hilfsfunktion zum sicheren Lesen von (VAR)BINARY Metadaten
             let get_s = |col: &str| -> String {
@@ -65,43 +67,29 @@ impl MySqlDriver {
                     .unwrap_or_default()
             };
 
-            let col_name = get_s("Field");
+            let col_name = get_s("Field").to_string();
             let mysql_column_type = get_s("Type"); // z.B. "int(11) unsigned" oder "enum('a','b')"
 
-            // Extrahiere den reinen Datentyp (alles vor der ersten Klammer oder Leerstelle)
+            // Extrahiere den reinen Datentyp (alles vor der ersten Klammer)
             let mysql_data_type = mysql_column_type
-                .split(|c| c == '(' || c == ' ')
-                .next()
-                .unwrap_or(&mysql_column_type)
-                .to_string();
+                .split('(') // Teilt beim (
+                .next() // Nimmt den ersten Teil
+                .map(|s| s.trim()) // Entfernt Leerzeichen (" integer " -> "integer")
+                .unwrap_or(mysql_column_type.trim()) // Fallback ebenfalls getrimmt
+                .to_lowercase(); // Umwandlung in Kleinschreibung
 
-            // --- Mapping Logik ---
-            let mut target_type = config
-                .types
-                .as_ref()
-                .and_then(|t| t.get(&mysql_column_type.to_lowercase()))
-                .or_else(|| {
-                    config
-                        .types
-                        .as_ref()
-                        .and_then(|t| t.get(&mysql_data_type.to_lowercase()))
+            // START MAPPING LOGIK
+            let target_data_type = target_types
+                .and_then(|t| {
+                    t.get(&mysql_column_type)
+                        .or_else(|| t.get(&mysql_data_type))
                 })
                 .cloned()
                 .unwrap_or(mysql_data_type.clone());
-
-            // Unsigned Regel anwenden
-            if let Some(rules) = &config.rules {
-                if rules.unsigned_int_to_bigint.unwrap_or(false)
-                    && mysql_column_type.contains("unsigned")
-                {
-                    if mysql_data_type.contains("int") {
-                        target_type = "bigint".to_string();
-                    }
-                }
-            }
+            // END MAPPING LOGIK
 
             // Enum-Werte extrahieren, falls vorhanden
-            let enum_values = if mysql_column_type.starts_with("enum") {
+            let enum_values = if mysql_data_type == "enum" {
                 Some(self.parse_mysql_enum_values(&mysql_column_type))
             } else {
                 None
@@ -152,7 +140,7 @@ impl MySqlDriver {
 
             columns.push(ForgeColumn {
                 name: col_name,
-                data_type: target_type.to_lowercase(),
+                data_type: target_data_type,
                 // Length/Precision/Scale parsed from MySQL column type if present
                 length: length,
                 precision: precision,
@@ -236,18 +224,14 @@ impl MySqlDriver {
         Ok(Vec::new())
     }
 
-    pub fn field_migration_sql(&self, field: ForgeColumn) -> String {
+    pub fn field_migration_sql(&self, field: ForgeColumn, config: &ForgeConfig) -> String {
+        let target_types = config.get_type_list("mysql", "on_write");
 
-        let binding = field.data_type.to_lowercase();
-        let sql_type = match binding.as_str() {
-            "integer" => "int",
-            "biginteger" => "bigint",
-            "text" => "longtext",
-            "datetimetz" => "timestamp",
-            "blob" => "longblob",
-            // Nur die Typen auflisten, die sich wirklich ändern!
-            other => other,
-        };
+        let data_type_lower = field.data_type.to_lowercase();
+        let sql_type = target_types
+            .and_then(|t| t.get(&data_type_lower))
+            .cloned()
+            .unwrap_or(data_type_lower);
 
         let mut ret = String::new();
 
@@ -257,7 +241,7 @@ impl MySqlDriver {
         // Type & Parameters
         ret.push_str(&format!(" {}", sql_type));
 
-        match sql_type {
+        match sql_type.as_str() {
             "decimal" => {
                 if let (Some(p), Some(s)) = (field.precision, field.scale) {
                     ret.push_str(&format!("({},{})", p, s));
@@ -281,7 +265,7 @@ impl MySqlDriver {
         }
 
         // Nullable & Default NULL
-        if !field.is_nullable  {
+        if !field.is_nullable {
             ret.push_str(" NOT NULL");
         } else {
             ret.push_str(" NULL");
@@ -300,7 +284,7 @@ impl MySqlDriver {
         }
 
         // Auto Increment
-        if field.auto_increment  {
+        if field.auto_increment {
             ret.push_str(" AUTO_INCREMENT");
         }
 
@@ -319,12 +303,12 @@ impl MySqlDriver {
     }
 
     /// Generiert das CREATE TABLE Statement für MySQL
-    pub fn build_mysql_create_table_sql(&self, table: &ForgeTable) -> String {
+    pub fn build_mysql_create_table_sql(&self, table: &ForgeTable, config: &ForgeConfig) -> String {
         let mut col_defs = Vec::new();
         let mut pks = Vec::new();
 
         for col in &table.columns {
-            let def = self.field_migration_sql(col.clone());
+            let def = self.field_migration_sql(col.clone(), config);
             col_defs.push(def);
 
             if col.is_primary_key {
@@ -346,9 +330,10 @@ impl MySqlDriver {
     pub fn create_table_migration_sql(
         &self,
         dst_table: &ForgeTable,
+        config: &ForgeConfig,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut stmts = Vec::new();
-        let sql = self.build_mysql_create_table_sql(dst_table);
+        let sql = self.build_mysql_create_table_sql(dst_table, config);
         stmts.push(sql);
         // Nach dem Erstellen der Tabelle auch alle Nicht-PK-Indizes anlegen
         for index in &dst_table.indices {
@@ -369,6 +354,7 @@ impl MySqlDriver {
         &self,
         src_table: &ForgeTable,
         dst_table: &ForgeTable,
+        config: &ForgeConfig,
         destructive: bool,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut all_statements = Vec::new();
@@ -389,13 +375,13 @@ impl MySqlDriver {
             if let Some(src_col) = src_cols.get(&dst_col.name) {
                 // WENN eine ForgeColumn in beiden vorkommt -> modify_column_migration_sql()
                 let sql =
-                    self.modify_column_migration(&dst_table.name, src_col, dst_col, destructive);
+                    self.modify_column_migration(&dst_table.name, src_col, dst_col, config, destructive);
                 if !sql.is_empty() {
                     all_statements.push(sql);
                 }
             } else {
                 // WENN eine ForgeColumn NICHT in src_table.columns ABER in dst_table.columns -> add_column_migration_sql()
-                all_statements.push(self.add_column_migration(&dst_table.name, dst_col));
+                all_statements.push(self.add_column_migration(&dst_table.name, dst_col, config));
             }
         }
 
@@ -454,8 +440,8 @@ impl MySqlDriver {
         Ok(all_statements)
     }
 
-    pub fn add_column_migration(&self, table_name: &str, dst_col: &ForgeColumn) -> String {
-        self.build_mysql_add_column_sql(table_name, dst_col)
+    pub fn add_column_migration(&self, table_name: &str, dst_col: &ForgeColumn, config: &ForgeConfig) -> String {
+        self.build_mysql_add_column_sql(table_name, dst_col, config)
     }
 
     pub fn drop_column_migration(&self, table_name: &str, src_col: &ForgeColumn) -> String {
@@ -470,6 +456,7 @@ impl MySqlDriver {
         table_name: &str,
         src_col: &ForgeColumn,
         dst_col: &ForgeColumn,
+        config: &ForgeConfig,
         _destructive: bool,
     ) -> String {
         let mut changed = src_col.data_type != dst_col.data_type
@@ -479,14 +466,8 @@ impl MySqlDriver {
         // Spezialbehandlung für FLOAT: Numerischer Vergleich der Default-Werte
         if !changed {
             if src_col.data_type.eq_ignore_ascii_case("float") {
-                let src_def_f = src_col
-                    .default
-                    .as_ref()
-                    .and_then(|s| s.parse::<f64>().ok());
-                let dst_def_f = dst_col
-                    .default
-                    .as_ref()
-                    .and_then(|s| s.parse::<f64>().ok());
+                let src_def_f = src_col.default.as_ref().and_then(|s| s.parse::<f64>().ok());
+                let dst_def_f = dst_col.default.as_ref().and_then(|s| s.parse::<f64>().ok());
 
                 if src_def_f != dst_def_f {
                     changed = true;
@@ -497,40 +478,17 @@ impl MySqlDriver {
         }
 
         if changed {
-            let mut def = format!(
-                "ALTER TABLE `{}` MODIFY COLUMN `{}` {}",
-                table_name, dst_col.name, dst_col.data_type
-            );
-            if let Some(len) = dst_col.length {
-                def.push_str(&format!("({})", len));
-            }
-            if !dst_col.is_nullable {
-                def.push_str(" NOT NULL");
-            }
-            if let Some(default) = &dst_col.default {
-                def.push_str(&format!(" DEFAULT '{}'", default));
-            }
-            return format!("{};", def);
+            let col_copy = dst_col.clone();
+            let sql_def = self.field_migration_sql(col_copy, config);
+            return format!("ALTER TABLE `{}` MODIFY COLUMN {};", table_name, sql_def);
         }
         "".to_string()
     }
 
     /// Generiert ein ALTER TABLE ADD COLUMN Statement
-    pub fn build_mysql_add_column_sql(&self, table_name: &str, col: &ForgeColumn) -> String {
-        let mut def = format!(
-            "ALTER TABLE `{}` ADD COLUMN `{}` {}",
-            table_name, col.name, col.data_type
-        );
-        if let Some(len) = col.length {
-            def.push_str(&format!("({})", len));
-        }
-        if !col.is_nullable {
-            def.push_str(" NOT NULL");
-        }
-        if let Some(default) = &col.default {
-            def.push_str(&format!(" DEFAULT '{}'", default));
-        }
-        format!("{};", def)
+    pub fn build_mysql_add_column_sql(&self, table_name: &str, col: &ForgeColumn, config: &ForgeConfig) -> String {
+        let sql_def = self.field_migration_sql(col.clone(), config);
+        format!("ALTER TABLE `{}` ADD COLUMN {};", table_name, sql_def)
     }
 
     /// Generiert ein CREATE INDEX Statement
@@ -605,14 +563,14 @@ impl DatabaseDriver for MySqlDriver {
             .fetch_one(&self.pool)
             .await?;
 
-        // 1. Alle Tabellen-Hüllen mit Kommentaren holen
+        // Alle Tabellen-Hüllen mit Kommentaren holen
         let mut tables = self.fetch_tables().await?;
 
         if tables.is_empty() {
-            println!("⚠️ Keine Tabellen in der Datenbank gefunden.");
+            println!("Keine Tabellen in der Datenbank gefunden.");
         }
 
-        // 2. Details für jede Tabelle nachladen
+        // Details für jede Tabelle nachladen
         for table in &mut tables {
             // Spalten laden und Mapping-Config anwenden
             table.columns = self.fetch_columns(&table.name, config).await?;
@@ -624,12 +582,12 @@ impl DatabaseDriver for MySqlDriver {
             table.foreign_keys = self.fetch_foreign_keys(&table.name).await?;
         }
 
-        // 3. In das ForgeSchema einbetten
+        // In das ForgeSchema einbetten
         Ok(ForgeSchema {
             metadata: ForgeMetadata {
                 source_system: "mysql".to_string(),
                 source_database_name: db_name,
-                created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: chrono::Local::now().to_rfc3339(),
                 forge_version: env!("CARGO_PKG_VERSION").to_string(),
                 config_file: "".to_string(),
             },
@@ -642,16 +600,8 @@ impl DatabaseDriver for MySqlDriver {
         source_schema: &ForgeSchema,
         config: &ForgeConfig,
         dry_run: bool,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-        let mut all_statements = Vec::new();
-
-        let src_schema = ForgeSchema::new();
-
-        all_statements = self
-            .diff_schema(&src_schema, config, dry_run, false)
-            .await?;
-
-        Ok(all_statements)
+    ) -> Result<Vec<String>, Box<dyn Error>> {
+        unimplemented!("obsolete")
     }
 
     async fn diff_schema(
@@ -678,13 +628,13 @@ impl DatabaseDriver for MySqlDriver {
         for table in &source_schema.tables {
             if let Some(target_table) = target_tables.get(&table.name) {
                 // WENN tabelle in source_schema und target_schema -> alter_table_migration_sql()
-                let stmts = self.alter_table_migration_sql(target_table, table, destructive)?;
+                let stmts = self.alter_table_migration_sql(target_table, table, config, destructive)?;
                 all_statements.extend(stmts);
             } else {
                 // WENN tabelle in target_schema, aber nicht in source_schema -> create_table_migration_sql()
                 // (Anmerkung: In der Logik des Codes ist source_schema das Ziel-Schema,
                 //  daher ist eine Tabelle, die in source aber nicht in target ist, neu zu erstellen)
-                let stmts = self.create_table_migration_sql(table)?;
+                let stmts = self.create_table_migration_sql(table, config)?;
                 all_statements.extend(stmts);
             }
         }

@@ -5,26 +5,62 @@ use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ForgeConfig {
-    pub general: Option<GeneralConfig>,
-    pub types: Option<HashMap<String, String>>,
-    pub rules: Option<RulesConfig>,
-    pub tables: Option<TableConfig>,
+    pub general: Option<ForgeGeneralConfig>,
+    pub mysql: Option<ForgeDbTypeConfig>,
+    pub postgres: Option<ForgeDbTypeConfig>,
+    pub rules: Option<ForgeRulesConfig>,
+    pub tables: Option<ForgeTableConfig>,
+}
+
+impl ForgeConfig {
+    /// Gibt die vollständige Mapping-Liste für eine DB und eine Richtung zurück
+    pub fn get_type_list(
+        &self,
+        db_name: &str,
+        direction: &str,
+    ) -> Option<&HashMap<String, String>> {
+        // Datenbank-Sektion
+        let db_cfg = match db_name {
+            "mysql" => self.mysql.as_ref(),
+            "postgres" => self.postgres.as_ref(),
+            _ => None,
+        }?;
+
+        // Typen
+        let types = db_cfg.types.as_ref()?;
+
+        // Richtung ("on_read" oder "on_write")
+        match direction {
+            "on_read" => types.on_read.as_ref(),
+            "on_write" => types.on_write.as_ref(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct GeneralConfig {
+pub struct ForgeDbTypeConfig {
+    pub types: Option<ForgeDirectionConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ForgeDirectionConfig {
+    pub on_read: Option<HashMap<String, String>>,
+    pub on_write: Option<HashMap<String, String>>,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ForgeGeneralConfig {
     pub on_missing_type: Option<String>,
     pub default_charset: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct RulesConfig {
-    pub unsigned_int_to_bigint: Option<bool>,
+pub struct ForgeRulesConfig {
     pub nullify_invalid_dates: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct TableConfig {
+pub struct ForgeTableConfig {
     pub renames: Option<HashMap<String, String>>,
     pub column_overrides: Option<HashMap<String, HashMap<String, String>>>,
 }
@@ -112,4 +148,3 @@ pub struct ForgeForeignKey {
     pub on_delete: Option<String>,
     pub on_update: Option<String>,
 }
-

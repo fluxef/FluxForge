@@ -310,6 +310,12 @@ impl MySqlDriver {
                     ret.push_str(&format!("({})", p));
                 }
             }
+            "int" | "integer" | "bigint" => {
+                if field.is_unsigned {
+                    ret.push_str(" unsigned");
+                }
+            }
+            
             "varchar" | "char" => {
                 if let Some(l) = field.length {
                     ret.push_str(&format!("({})", l));

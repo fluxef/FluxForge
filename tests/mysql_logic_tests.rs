@@ -109,8 +109,9 @@ async fn test_field_migration_sql_variants() {
     let mut c5 = col("id", "int");
     c5.is_nullable = false;
     c5.auto_increment = true;
+    c5.is_unsigned = true;
     let sql5 = drv.field_migration_sql(c5, &mk_config());
-    assert_eq!(sql5, "`id` int NOT NULL AUTO_INCREMENT");
+    assert_eq!(sql5, "`id` int unsigned NOT NULL AUTO_INCREMENT");
 
     // CURRENT_TIMESTAMP default with ON UPDATE CURRENT_TIMESTAMP per implementation
     let mut c6 = col("updated_at", "timestamp");
@@ -119,6 +120,31 @@ async fn test_field_migration_sql_variants() {
     c6.on_update = Some("CURRENT_TIMESTAMP".into());
     let sql6 = drv.field_migration_sql(c6, &mk_config());
     assert_eq!(sql6, "`updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+}
+
+#[tokio::test]
+async fn test_field_migration_sql_unsigned_matrix() {
+    let drv = mk_driver();
+    let config = mk_config();
+
+    let types = vec!["int", "integer", "bigint"];
+    let unsigned_variants = vec![true, false];
+
+    for t in types {
+        for is_unsigned in &unsigned_variants {
+            let mut c = col("col_name", t);
+            c.is_unsigned = *is_unsigned;
+            c.is_nullable = false;
+            
+            let sql = drv.field_migration_sql(c, &config);
+            
+            if *is_unsigned {
+                assert!(sql.contains(" unsigned"), "Type {} with is_unsigned=true should contain 'unsigned'. SQL: {}", t, sql);
+            } else {
+                assert!(!sql.contains(" unsigned"), "Type {} with is_unsigned=false should NOT contain 'unsigned'. SQL: {}", t, sql);
+            }
+        }
+    }
 }
 
 #[tokio::test]

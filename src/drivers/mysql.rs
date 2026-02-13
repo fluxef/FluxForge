@@ -41,6 +41,7 @@ impl MySqlDriver {
             ForgeUniversalValue::Time(t) => query.bind(t),
             ForgeUniversalValue::Date(d) => query.bind(d),
             ForgeUniversalValue::DateTime(dt) => query.bind(dt),
+            ForgeUniversalValue::Decimal(d) => query.bind(d),
             ForgeUniversalValue::Json(j) => query.bind(j),
             ForgeUniversalValue::Null => query.bind(None::<String>),
         }
@@ -729,11 +730,18 @@ impl MySqlDriver {
                         .map(ForgeUniversalValue::Json)
                         .unwrap_or(ForgeUniversalValue::Null),
 
-                    "DOUBLE" | "FLOAT" | "DECIMAL" => row
+                    "DOUBLE" | "FLOAT" => row
                         .try_get::<Option<f64>, _>(i)
                         .ok()
                         .flatten()
                         .map(ForgeUniversalValue::Float)
+                        .unwrap_or(ForgeUniversalValue::Null),
+
+                    "DECIMAL" => row
+                        .try_get::<Option<rust_decimal::Decimal>, _>(i)
+                        .ok()
+                        .flatten()
+                        .map(ForgeUniversalValue::Decimal)
                         .unwrap_or(ForgeUniversalValue::Null),
                     "BLOB" | "VARBINARY" | "BINARY" => row
                         .try_get::<Option<Vec<u8>>, _>(i)

@@ -1,7 +1,8 @@
+
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
+use rust_decimal::Decimal;
 // config structures for mapping.toml
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -182,6 +183,7 @@ pub enum ForgeUniversalValue {
     Time(NaiveTime),
     Date(NaiveDate),
     DateTime(NaiveDateTime),
+    Decimal(Decimal),
     Json(serde_json::Value),
     Null,
 }

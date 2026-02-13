@@ -163,6 +163,67 @@ async fn test_field_migration_sql_variants() {
 }
 
 #[tokio::test]
+async fn test_field_migration_sql_comprehensive_coverage() {
+    let drv = mk_driver();
+    let config = mk_config();
+
+    // Matrix für int/decimal Defaults
+    let cases = vec![
+        // (Type, Precision, Scale, Default, ExpectedSQL)
+        ("int", None, None, Some("0"), "`col` int NULL DEFAULT '0'"),
+        ("int", None, None, Some("123"), "`col` int NULL DEFAULT '123'"),
+        ("decimal", Some(10), Some(3), Some("0.000"), "`col` decimal(10,3) NULL DEFAULT '0.000'"),
+        ("decimal", Some(10), Some(3), Some("123.456"), "`col` decimal(10,3) NULL DEFAULT '123.456'"),
+        ("decimal", Some(10), None, Some("123"), "`col` decimal(10) NULL DEFAULT '123'"),
+        ("bigint", None, None, Some("0"), "`col` bigint NULL DEFAULT '0'"),
+    ];
+
+    for (dtype, prec, scale, def, expected) in cases {
+        let mut c = col("col", dtype);
+        c.precision = prec;
+        c.scale = scale;
+        c.default = def.map(|s| s.to_string());
+        c.is_nullable = true; // explicitly test NULL variant with default
+
+        let sql = drv.field_migration_sql(c.clone(), &config);
+        assert_eq!(sql, expected, "Failed for {} with default {:?}", dtype, def);
+    }
+
+    // Test varchar/char length variations
+    let mut c_v = col("name", "varchar");
+    c_v.length = Some(50);
+    c_v.is_nullable = true;
+    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` varchar(50) NULL DEFAULT NULL");
+    
+    c_v.data_type = "char".to_string();
+    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` char(50) NULL DEFAULT NULL");
+
+    // Test enum variations
+    let mut c_e = col("mode", "enum");
+    c_e.enum_values = Some(vec!["fast".into(), "slow".into()]);
+    c_e.is_nullable = true;
+    assert_eq!(drv.field_migration_sql(c_e, &config), "`mode` enum('fast','slow') NULL DEFAULT NULL");
+
+    // Test NOT NULL variations (no default)
+    let mut c_nn = col("id", "int");
+    c_nn.is_nullable = false;
+    assert_eq!(drv.field_migration_sql(c_nn, &config), "`id` int NOT NULL");
+
+    // Test DEFAULT NULL for nullable field
+    let mut c_nul = col("note", "text");
+    c_nul.is_nullable = true;
+    c_nul.default = None;
+    assert_eq!(drv.field_migration_sql(c_nul, &config), "`note` text NULL DEFAULT NULL");
+
+    // Test ON UPDATE behavior for non-timestamp (e.g. customized)
+    let mut c_upd = col("val", "int");
+    c_upd.is_nullable = true;
+    c_upd.default = Some("1".into());
+    c_upd.on_update = Some("val + 1".into());
+    assert_eq!(drv.field_migration_sql(c_upd, &config), "`val` int NULL DEFAULT '1' ON UPDATE val + 1");
+}
+
+#[tokio::test]
 async fn test_field_migration_sql_unsigned_matrix() {
     let drv = mk_driver();
     let config = mk_config();

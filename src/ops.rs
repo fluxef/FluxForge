@@ -23,9 +23,9 @@ pub async fn replicate_data(
     )?
         .progress_chars("#>-");
 
-    if verbose {
+    // if verbose {
         println!("Starting data replication");
-    }
+    // }
 
     for table in &schema.tables {
         let pb = multi.add(ProgressBar::new_spinner());
@@ -63,6 +63,7 @@ pub async fn replicate_data(
         }
 
         pb.finish_with_message(format!("Done: {} ({} rows)", table.name, total_rows));
+        println!("  {}", table.name);
     }
 
     Ok(())

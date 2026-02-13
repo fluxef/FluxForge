@@ -42,7 +42,7 @@ pub trait DatabaseDriver: Send + Sync {
 
 
     // Gibt einen Stream von Zeilen zurück
-    async fn stream_table_dataa(
+    async fn stream_table_data_old(
         &self,
         table_name: &str,
     ) -> Result<
@@ -66,7 +66,7 @@ pub trait DatabaseDriver: Send + Sync {
         chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
     ) -> Result<(), Box<dyn std::error::Error>>;
     
-    async fn insert_chunka(
+    async fn insert_chunk_old(
         &self,
         table_name: &str,
         dry_run: bool,

@@ -198,7 +198,7 @@ impl DatabaseDriver for PostgresDriver {
         Ok(all_statements)
     }
 
-    async fn insert_chunka(
+    async fn insert_chunk_old(
         &self,
         table_name: &str,
         dry_run: bool,
@@ -261,7 +261,7 @@ impl DatabaseDriver for PostgresDriver {
         Ok(())
     }
 
-    async fn stream_table_dataa(
+    async fn stream_table_data_old(
         &self,
         table_name: &str,
     ) -> Result<

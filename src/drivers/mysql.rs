@@ -7,14 +7,16 @@ use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
+use serde_json::Value;
 use sqlx::{
-    Column, Row, TypeInfo,
-    mysql::{MySqlPool, MySqlRow},
+    mysql::{MySqlPool, MySqlRow}, Column, Row,
+    TypeInfo,
 };
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::pin::Pin;
-use serde_json::Value;
 
 pub struct MySqlDriver {
     pub pool: MySqlPool,
@@ -947,7 +949,11 @@ impl DatabaseDriver for MySqlDriver {
         Ok(all_statements)
     }
 
-    async fn stream_table_dataa(&self, table_name: &str) -> Result<Pin<Box<dyn Stream<Item=Result<Value, sqlx::Error>> + Send>>, Box<dyn Error>> {
+    async fn stream_table_data_old(
+        &self,
+        table_name: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Value, sqlx::Error>> + Send>>, Box<dyn Error>>
+    {
         todo!()
     }
 
@@ -955,35 +961,120 @@ impl DatabaseDriver for MySqlDriver {
         &self,
         table_name: &str,
     ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>> + Send + '_>>,
+        Pin<
+            Box<
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>>
+                    + Send
+                    + '_,
+            >,
+        >,
         Box<dyn std::error::Error>,
     > {
         let query_string = format!("SELECT * FROM `{}`", table_name);
 
         let stream = async_stream::try_stream! {
-                let mut rows = sqlx::query(&query_string).fetch(&self.pool);
+            let mut rows = sqlx::query(&query_string).fetch(&self.pool);
 
-                while let Some(row) = rows.next().await {
-                    let row: sqlx::mysql::MySqlRow = row?;
-                    let values = self.map_row_to_universal_values(&row);
+            while let Some(row) = rows.next().await {
+                let row: sqlx::mysql::MySqlRow = row?;
+                let values = self.map_row_to_universal_values(&row);
 
-                    let mut row_map = IndexMap::new();
-                    for (col, val) in row.columns().iter().zip(values) {
-                        row_map.insert(col.name().to_string(), val);
-                    }
-
-                    yield row_map;
+                let mut row_map = IndexMap::new();
+                for (col, val) in row.columns().iter().zip(values) {
+                    row_map.insert(col.name().to_string(), val);
                 }
-            };
+
+                yield row_map;
+            }
+        };
 
         Ok(Box::pin(stream))
     }
 
-    async fn insert_chunk(&self, table_name: &str, dry_run: bool, chunk: Vec<IndexMap<String, ForgeUniversalValue>>) -> Result<(), Box<dyn std::error::Error>> {
-        todo!()
+    async fn insert_chunk(
+        &self,
+        table_name: &str,
+        dry_run: bool,
+        chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if chunk.is_empty() {
+            return Ok(());
+        }
+
+        // 1. Spaltennamen aus dem ersten Datensatz extrahieren
+        let first_row = chunk.first().ok_or("Chunk is empty")?;
+        let columns: Vec<String> = first_row.keys().cloned().collect();
+        let column_names = columns
+            .iter()
+            .map(|c| format!("`{}`", c))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // 2. SQL-Statement vorbereiten
+        let mut sql = format!("INSERT INTO `{}` ({}) VALUES ", table_name, column_names);
+
+        let mut placeholders = Vec::new();
+        for _ in 0..chunk.len() {
+            let row_placeholders = vec!["?"; columns.len()].join(", ");
+            placeholders.push(format!("({})", row_placeholders));
+        }
+        sql.push_str(&placeholders.join(", "));
+
+        if dry_run {
+            println!("Dry run SQL = {}", sql);
+        } else {
+            // 3. Query-Objekt erstellen und Werte binden
+            let mut query = sqlx::query(&sql);
+
+            for row in &chunk {
+                for col in &columns {
+                    // Wert aus der IndexMap holen (Fallback auf Null)
+                    let val = row.get(col).unwrap_or(&ForgeUniversalValue::Null);
+
+                    // Binding basierend auf  Enum
+                    query = bind_universal(query, val);
+                }
+            }
+
+            if let Err(e) = query.execute(&self.pool).await {
+                eprintln!("Batch insert failed for table `{}`. Retrying row-by-row for logging...", table_name);
+
+                // Wir bauen das SQL für eine einzelne Zeile: INSERT INTO `table` (`col1`) VALUES (?)
+                let single_sql = format!(
+                    "INSERT INTO `{}` ({}) VALUES ({})",
+                    table_name,
+                    columns.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", "),
+                    vec!["?"; columns.len()].join(", ")
+                );
+
+                for row_map in &chunk {
+                    let mut single_query = sqlx::query(&single_sql);
+
+                    for col in &columns {
+                        let val = row_map.get(col).unwrap_or(&ForgeUniversalValue::Null);
+                        single_query = bind_universal(single_query, val);
+                    }
+
+                    // Wir führen die Zeile einzeln aus
+                    if let Err(single_err) = single_query.execute(&self.pool).await {
+                        let row_data = format!("{:?}", row_map);
+                        let err_msg = single_err.to_string();
+
+                        // JETZT hast du Zugriff auf die spezifische Zeile für dein Logging!
+                        eprintln!("Error in Row: {} | Error: {}", row_data, err_msg);
+                        log_error_to_file(table_name, &row_data, &err_msg);
+                    }
+                }
+
+                // nein, wir wollen durchlaufen und fehler loggen
+                // return Err(e.into());
+            }
+        }
+
+        Ok(())
     }
 
-    async fn insert_chunka(
+    async fn insert_chunk_old(
         &self,
         table_name: &str,
         dry_run: bool,
@@ -1057,5 +1148,40 @@ impl DatabaseDriver for MySqlDriver {
         }
 
         Ok(())
+    }
+}
+
+/// Schreibt problematische Zeilen in eine lokale .log Datei
+fn log_error_to_file(table: &str, row_data: &String, error_msg: &str) {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("migration_errors.log")
+        .expect("Konnte Log-Datei nicht öffnen");
+
+    let line = format!(
+        "TABLE: {} | ERROR: {} | DATA: {:?}\n",
+        table, error_msg, row_data
+    );
+    let _ = file.write_all(line.as_bytes());
+}
+
+fn bind_universal<'q>(
+    query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
+    val: &'q ForgeUniversalValue,
+) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
+    match val {
+        ForgeUniversalValue::Integer(i) => query.bind(i),
+        ForgeUniversalValue::UnsignedInteger(u) => query.bind(u),
+        ForgeUniversalValue::Float(f) => query.bind(f),
+        ForgeUniversalValue::Text(s) => query.bind(s),
+        ForgeUniversalValue::Binary(bin) => query.bind(bin),
+        ForgeUniversalValue::Boolean(b) => query.bind(b),
+        ForgeUniversalValue::Year(y) => query.bind(y),
+        ForgeUniversalValue::Time(t) => query.bind(t),
+        ForgeUniversalValue::Date(d) => query.bind(d),
+        ForgeUniversalValue::DateTime(dt) => query.bind(dt),
+        ForgeUniversalValue::Json(j) => query.bind(j),
+        ForgeUniversalValue::Null => query.bind(None::<String>),
     }
 }

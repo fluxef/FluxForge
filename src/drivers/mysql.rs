@@ -808,7 +808,7 @@ impl DatabaseDriver for MySqlDriver {
         })
     }
 
-    async fn diff_schema(
+    async fn diff_and_apply_schema(
         &self,
         source_schema: &ForgeSchema,
         config: &ForgeConfig,

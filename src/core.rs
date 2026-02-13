@@ -20,7 +20,7 @@ impl ForgeConfig {
         db_name: &str,
         direction: &str,
     ) -> Option<&HashMap<String, String>> {
-        // Datenbank-Sektion
+        // database section
         let db_cfg = match db_name {
             "mysql" => self.mysql.as_ref(),
             "postgres" => self.postgres.as_ref(),

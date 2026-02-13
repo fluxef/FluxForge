@@ -7,9 +7,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    /// Verbose output
-    #[arg(long, short = 'v', global = true)]
-    pub verbose: bool,
+
 }
 
 #[derive(Subcommand)]
@@ -24,6 +22,11 @@ pub enum Commands {
 
         #[arg(long)]
         config: Option<PathBuf>,
+        
+        /// Verbose output
+        #[arg(long, short = 'v')]
+        verbose: bool,
+        
     },
     /// Migrate structure and optionally data
     #[command(group(
@@ -51,6 +54,10 @@ pub enum Commands {
         #[arg(long)]
         dry_run: bool,
 
+        /// Verbose output
+        #[arg(long, short = 'v')]
+        verbose: bool,
+
         #[arg(long)]
         allow_destructive: bool,
     },
@@ -70,6 +77,10 @@ pub enum Commands {
         /// Output SQL statements without executing them
         #[arg(long)]
         dry_run: bool,
+        
+        /// Verbose output
+        #[arg(long, short = 'v')]
+        verbose: bool,
         
         // stop data transfer if sql error writing sql data
         #[arg(long)]

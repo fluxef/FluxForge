@@ -4,66 +4,42 @@ use fluxforge::{drivers, ops, ForgeSchema};
 
 pub async fn handle_command(
     command: Commands,
-    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Commands::Extract {
             source,
             schema,
             config,
+            verbose,
         } => {
             println!("Extracting schema from {}...", source);
 
-            // Konfiguration laden (Nutzt Standard, wenn keine Datei angegeben)
+            // load config, uses internal defaults if not file set
             let forge_config = load_config(config.clone())?;
-            if verbose {
-                let mysql_count = forge_config
-                    .mysql
-                    .as_ref()
-                    .and_then(|m| m.types.as_ref())
-                    .and_then(|t| t.on_read.as_ref())
-                    .map(|t| t.len())
-                    .unwrap_or(0);
-                let pg_count = forge_config
-                    .postgres
-                    .as_ref()
-                    .and_then(|m| m.types.as_ref())
-                    .and_then(|t| t.on_read.as_ref())
-                    .map(|t| t.len())
-                    .unwrap_or(0);
-                println!(
-                    "Configuration loaded (Mappings: MySQL={}, Postgres={})",
-                    mysql_count, pg_count
-                );
-            }
 
-            // Quell-Treiber instanziieren
             let source_driver = drivers::create_driver(&source).await?;
 
-            // Schema extrahieren
-            // Der Driver sollte intern die forge_config nutzen, um Typen zu normalisieren
             let mut extracted_schema = source_driver.fetch_schema(&forge_config).await?;
             extracted_schema.metadata.config_file = get_config_file_path(config.clone());
 
             if verbose {
                 println!(
-                    "📊 Extracted {} tables from source.",
+                    "Extracted {} tables from source.",
                     extracted_schema.tables.len()
                 );
             }
 
-            // 4. In JSON-Datei schreiben
-            // Wir nutzen serde_json mit "pretty print", damit die Datei lesbar bleibt
             let file = std::fs::File::create(&schema)?;
             serde_json::to_writer_pretty(file, &extracted_schema)?;
 
-            println!("Schema successfully forged and saved to: {:?}", schema);
-
+            if verbose {
+                println!("Schema successfully forged and saved to: {:?}", schema);
+            }
             Ok(())
         }
 
         // only schema diff, NO DATA TRANSFER
-        // target-db must exist and but can be non-empty
+        // target-db must exist but can be non-empty
         // schema-file can be omitted, in which case source-db is used which then becomes mandatory
         Commands::Migrate {
             source,
@@ -71,8 +47,13 @@ pub async fn handle_command(
             target,
             config,
             dry_run,
+            verbose,
             allow_destructive,
         } => {
+            
+            // source = new state (from source which is file or DB)
+            // target state = actual state of DB that will be changed
+            
             let forge_config = load_config(config.clone())?;
 
             let mut source_driver = None;
@@ -80,18 +61,18 @@ pub async fn handle_command(
             let mut schema = if let Some(path) = schema {
                 // reading schema from file
                 let file = std::fs::File::open(&path).map_err(|e| {
-                    format!("Fehler beim Öffnen der Schema-Datei {:?}: {}", path, e)
+                    format!("Error opening Schema-File {:?}: {}", path, e)
                 })?;
                 let int_schema: ForgeSchema =
                     serde_json::from_reader(std::io::BufReader::new(file))
-                        .map_err(|e| format!("Fehler beim Parsen der JSON-Datei: {}", e))?;
+                        .map_err(|e| format!("Error parsing Schema-File {}.", e))?;
 
                 int_schema
             } else {
-                // reading schema from live source database
+                // reading schema from source database
                 let src_url = source
                     .as_ref()
-                    .ok_or("Source URL is required in live mode")?;
+                    .ok_or("Source URL is required.")?;
                 let s_driver = drivers::create_driver(src_url).await?;
                 let int_schema = s_driver.fetch_schema(&forge_config).await?;
                 source_driver = Some(s_driver);
@@ -99,71 +80,72 @@ pub async fn handle_command(
                 int_schema
             };
 
-            // Tabellen sortieren (Abhängigkeiten auflösen)
+            // sort tables (will become more important when foreign keys are implemented)
             ops::sort_tables_by_dependencies(&schema)
                 .map(|sorted| schema.tables = sorted)
-                .map_err(|e| format!("Abhängigkeitsfehler: {}", e))?;
+                .map_err(|e| format!("Circular Dependency Error: {}", e))?;
 
-            // Ziel-Treiber vorbereiten und Struktur anwenden
             let target_driver = drivers::create_driver(&target).await?;
 
+            // apply schema diff to target
             let statements = target_driver
-                .diff_schema(&schema, &forge_config, dry_run, allow_destructive)
+                .diff_and_apply_schema(&schema, &forge_config, dry_run, verbose,allow_destructive)
                 .await?;
 
             if dry_run {
-                println!("--- DRY RUN START : Geplante Strukturänderungen ---");
+                println!("--- DRY RUN START : SQL changes ---");
                 for sql in statements {
                     println!("{}", sql);
                 }
-                println!("--- DRY RUN END: Geplante Strukturänderungen ---");
+                println!("--- DRY RUN END: SQL changes ---");
             }
 
             Ok(())
         }
 
         // complete transfer of schema and data, target-db must exist and be empty
-        // always from source-db, never schema-file
+        // always from source-db, never from schema-file
         Commands::Replicate {
             source,
             target,
             config,
             dry_run,
+            verbose,
             halt_on_error,
         } => {
-            // Konfiguration laden
+
             let forge_config = load_config(config.clone())?;
 
-            // Ziel-Treiber
+            // target database
             let target_driver = drivers::create_driver(&target).await?;
 
             if !target_driver.db_is_empty().await? {
-                return Err("ABBRUCH: Die Zieldatenbank ist nicht leer.  \
-                    Um Datenverlust zu vermeiden, führt FluxForge keine Migration in nicht-leere Datenbanken durch.".into());
+                return Err("ERROR: Target is not empty!  \
+                    For data loss protection the replication is only allowed into an empty database.".into());
             }
 
-            // source schema
+            // source database
             let source_driver = drivers::create_driver(&source).await?;
             let mut source_schema = source_driver.fetch_schema(&forge_config).await?;
 
-            // Tabellen sortieren (Abhängigkeiten auflösen)
+            // sort tables (will become more important when foreign keys are implemented)
             ops::sort_tables_by_dependencies(&source_schema)
                 .map(|sorted| source_schema.tables = sorted)
-                .map_err(|e| format!("Abhängigkeitsfehler: {}", e))?;
+                .map_err(|e| format!("Circular Dependency Error: {}", e))?;
 
-            // target schema in DB erstellen
+            // apply schema diff to target
             let statements = target_driver
-                .diff_schema(&source_schema, &forge_config, dry_run, true)
+                .diff_and_apply_schema(&source_schema, &forge_config, dry_run, verbose,true)
                 .await?;
 
             if dry_run {
-                println!("--- DRY RUN START: Geplante Strukturänderungen ---");
+                println!("--- DRY RUN START: SQL changes ---");
                 for sql in statements {
                     println!("{}", sql);
                 }
-                println!("--- DRY RUN END: Geplante Strukturänderungen ---");
+                println!("--- DRY RUN END: SQL changes ---");
             }
-            ops::migrate_data(
+            ops::replicate_data(
                 source_driver.as_ref(),
                 target_driver.as_ref(),
                 &source_schema,

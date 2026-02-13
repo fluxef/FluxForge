@@ -25,7 +25,7 @@ impl DatabaseDriver for PostgresDriver {
         todo!()
     }
 
-    async fn diff_schema(
+    async fn diff_and_apply_schema(
         &self,
         schema: &ForgeSchema,
         config: &ForgeConfig,

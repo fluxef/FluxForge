@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 
-pub async fn migrate_data(
+pub async fn replicate_data(
     source: &dyn DatabaseDriver,
     target: &dyn DatabaseDriver,
     schema: &ForgeSchema,
@@ -17,24 +17,17 @@ pub async fn migrate_data(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let multi = MultiProgress::new();
 
-    // Style für die Schmiede-Anzeige
+    // style for progress bar
     let style = ProgressStyle::with_template(
         "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} rows ({msg}) {per_sec}"
     )?
         .progress_chars("#>-");
 
-    if (verbose) {
-        println!("Starte mit Datenreplikation");
+    if verbose {
+        println!("Starting data replication");
     }
 
     for table in &schema.tables {
-        // Wir wissen bei einem Stream oft nicht die Gesamtanzahl (len),
-        // es sei denn, wir machen vorher ein SELECT COUNT(*).
-        // Hier nutzen wir eine ProgressBar, die mitwächst.
-        if (verbose) {
-            println!("Starte Replikation von {}", table.name);
-        }
-
         let pb = multi.add(ProgressBar::new_spinner());
         pb.set_style(style.clone());
         pb.set_message(format!("Forging table: {}", table.name));
@@ -59,7 +52,7 @@ pub async fn migrate_data(
             }
         }
 
-        // Letzten Rest verarbeiten
+        // last remaining chunk
         if !chunk.is_empty() {
             target
                 .insert_chunk(&table.name, dry_run, halt_on_error, chunk)
@@ -79,13 +72,13 @@ pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTabl
     let mut graph = DiGraph::<&str, ()>::new();
     let mut nodes = HashMap::new();
 
-    // 1. Alle Tabellen als Knoten in den Graphen einfügen
+    // add tables as nodes
     for table in &schema.tables {
         let node_idx = graph.add_node(&table.name);
         nodes.insert(&table.name, node_idx);
     }
 
-    // 2. Kanten (Edges) für Foreign Keys ziehen
+    // make Edges for Foreign Keys
     for table in &schema.tables {
         let from_idx = nodes
             .get(&table.name)
@@ -99,7 +92,7 @@ pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTabl
         }
     }
 
-    // 3. Topologisch sortieren
+    // sort to find dependencies
     match toposort(&graph, None) {
         Ok(sorted_indices) => {
             let mut sorted_tables = Vec::new();
@@ -120,8 +113,7 @@ pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTabl
     }
 }
 
-
-/// Schreibt problematische Zeilen in eine lokale .log Datei
+/// write database data errors into logfile
 pub fn log_error_to_file(table: &str, row_data: &String, error_msg: &str) {
     let mut file = OpenOptions::new()
         .create(true)
@@ -135,5 +127,3 @@ pub fn log_error_to_file(table: &str, row_data: &String, error_msg: &str) {
     );
     let _ = file.write_all(line.as_bytes());
 }
-
-

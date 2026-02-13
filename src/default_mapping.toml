@@ -1,12 +1,12 @@
 # --- MySQL Sektion ---
-
 [mysql.general]
-# Standard-Verhalten für unbekannte Typen
+# default behaviour for unknown types
 on_missing_type = "warn" # oder "error"
+#
 default_charset = "utf8mb4"
 
 [mysql.types.on_read]
-# Von MySQL-Typ zu internem Typ (Postgres)
+# from mysql to internal representation (usually postgres)
 "integer" = "int"
 "timestamp" = "datetimetz"
 
@@ -14,7 +14,7 @@ default_charset = "utf8mb4"
 unsigned_int_to_bigint = true
 
 [mysql.types.on_write]
-# Von internem Typ (Postgres) zu MySQL-Typ
+# from internal representation (usually postgres) to MySQL-Typ
 "integer" = "int"
 "datetimetz" = "timestamp"
 "biginteger" = "bigint"

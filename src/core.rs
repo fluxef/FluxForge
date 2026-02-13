@@ -1,8 +1,8 @@
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-// --- Konfigurations-Strukturen (für mapping.toml) ---
+// config structures for mapping.toml
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ForgeConfig {
@@ -14,7 +14,7 @@ pub struct ForgeConfig {
 }
 
 impl ForgeConfig {
-    /// Gibt die vollständige Mapping-Liste für eine DB und eine Richtung zurück
+    /// get mappings for a database-type and direction
     pub fn get_type_list(
         &self,
         db_name: &str,
@@ -27,10 +27,10 @@ impl ForgeConfig {
             _ => None,
         }?;
 
-        // Typen
+        // types
         let types = db_cfg.types.as_ref()?;
 
-        // Richtung ("on_read" oder "on_write")
+        // direction ("on_read" or "on_write")
         match direction {
             "on_read" => types.on_read.as_ref(),
             "on_write" => types.on_write.as_ref(),
@@ -67,7 +67,6 @@ pub struct ForgeRuleGeneralConfig {
     pub nullify_invalid_dates: Option<bool>,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ForgeGeneralConfig {
     pub on_missing_type: Option<String>,
@@ -85,7 +84,7 @@ pub struct ForgeTableConfig {
     pub column_overrides: Option<HashMap<String, HashMap<String, String>>>,
 }
 
-// --- Schema-Strukturen (für interne Repräsentation / JSON) ---
+// Schema-Structures for internal representation of schema
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ForgeSchema {
@@ -140,7 +139,7 @@ pub struct ForgeColumn {
     pub default: Option<String>,
     pub comment: Option<String>,
     pub on_update: Option<String>,
-    pub enum_values: Option<Vec<String>>, // Speichert ["active", "inactive", etc.]
+    pub enum_values: Option<Vec<String>>,
 }
 
 impl ForgeColumn {
@@ -170,7 +169,7 @@ pub struct ForgeForeignKey {
     pub on_update: Option<String>,
 }
 
-// --- UNIVERSAL-Intermediate-TYP ---
+// --- UNIVERSAL-Intermediate data types ---
 #[derive(Debug, Clone)]
 pub enum ForgeUniversalValue {
     Integer(i64),
@@ -186,4 +185,3 @@ pub enum ForgeUniversalValue {
     Json(serde_json::Value),
     Null,
 }
-

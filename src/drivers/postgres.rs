@@ -25,20 +25,12 @@ impl DatabaseDriver for PostgresDriver {
         todo!()
     }
 
-    async fn create_schema(
-        &self,
-        source_schema: &ForgeSchema,
-        config: &ForgeConfig,
-        dry_run: bool,
-    ) -> Result<Vec<String>, Box<dyn Error>> {
-        todo!()
-    }
-
     async fn diff_schema(
         &self,
         schema: &ForgeSchema,
         config: &ForgeConfig,
         dry_run: bool,
+        verbose: bool,
         destructive: bool,
     ) -> Result<Vec<String>, Box<dyn Error>> {
         todo!()

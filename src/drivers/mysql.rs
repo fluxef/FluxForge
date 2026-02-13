@@ -960,24 +960,22 @@ impl DatabaseDriver for MySqlDriver {
     > {
         let query_string = format!("SELECT * FROM `{}`", table_name);
 
-        // Wir erzeugen den Stream direkt aus der Query.
-        // sqlx::query() akzeptiert auch String, nicht nur &str.
-        let stream = sqlx::query(query_string.as_str())
-            .fetch(&self.pool)
-            .map(move |row_result| {
-                row_result.map(|row: sqlx::mysql::MySqlRow| {
+        let stream = async_stream::try_stream! {
+                let mut rows = sqlx::query(&query_string).fetch(&self.pool);
+
+                while let Some(row) = rows.next().await {
+                    let row: sqlx::mysql::MySqlRow = row?;
                     let values = self.map_row_to_universal_values(&row);
+
                     let mut row_map = IndexMap::new();
                     for (col, val) in row.columns().iter().zip(values) {
                         row_map.insert(col.name().to_string(), val);
                     }
-                    row_map
-                })
-            });
 
-        // 3. Um Lifetime-Probleme zu vermeiden, nutzen wir oft 'map',
-        // aber der Schlüssel ist, dass query_string lange genug lebt.
-        // Falls der Compiler immer noch meckert, nutzen wir sqlx::query_with:
+                    yield row_map;
+                }
+            };
+
         Ok(Box::pin(stream))
     }
 

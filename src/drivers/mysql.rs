@@ -995,6 +995,7 @@ impl DatabaseDriver for MySqlDriver {
         &self,
         table_name: &str,
         dry_run: bool,
+        halt_on_error: bool,
         chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if chunk.is_empty() {
@@ -1037,13 +1038,20 @@ impl DatabaseDriver for MySqlDriver {
             }
 
             if let Err(e) = query.execute(&self.pool).await {
-                eprintln!("Batch insert failed for table `{}`. Retrying row-by-row for logging...", table_name);
+                eprintln!(
+                    "Batch insert failed for table `{}`. Retrying row-by-row for logging...",
+                    table_name
+                );
 
                 // Wir bauen das SQL für eine einzelne Zeile: INSERT INTO `table` (`col1`) VALUES (?)
                 let single_sql = format!(
                     "INSERT INTO `{}` ({}) VALUES ({})",
                     table_name,
-                    columns.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", "),
+                    columns
+                        .iter()
+                        .map(|c| format!("`{}`", c))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     vec!["?"; columns.len()].join(", ")
                 );
 
@@ -1065,9 +1073,9 @@ impl DatabaseDriver for MySqlDriver {
                         log_error_to_file(table_name, &row_data, &err_msg);
                     }
                 }
-
-                // nein, wir wollen durchlaufen und fehler loggen
-                // return Err(e.into());
+                if halt_on_error {
+                    return Err(e.into());
+                }
             }
         }
 

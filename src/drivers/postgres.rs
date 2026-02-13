@@ -320,7 +320,7 @@ impl DatabaseDriver for PostgresDriver {
         todo!()
     }
 
-    async fn insert_chunk(&self, table_name: &str, dry_run: bool, chunk: Vec<IndexMap<String, ForgeUniversalValue>>) -> Result<(), Box<dyn std::error::Error>> {
+    async fn insert_chunk(&self, table_name: &str, dry_run: bool, halt_on_error: bool, chunk: Vec<IndexMap<String, ForgeUniversalValue>>) -> Result<(), Box<dyn std::error::Error>> {
         todo!()
     }
 }

@@ -11,6 +11,7 @@ pub async fn migrate_data(
     schema: &ForgeSchema,
     dry_run: bool,
     verbose: bool,
+    halt_on_error: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let multi = MultiProgress::new();
 
@@ -32,11 +33,10 @@ pub async fn migrate_data(
             println!("Starte Replikation von {}", table.name);
         }
 
-        
-            let pb = multi.add(ProgressBar::new_spinner());
-            pb.set_style(style.clone());
-            pb.set_message(format!("Forging table: {}", table.name));
-        
+        let pb = multi.add(ProgressBar::new_spinner());
+        pb.set_style(style.clone());
+        pb.set_message(format!("Forging table: {}", table.name));
+
         let mut data_stream = source.stream_table_data(&table.name).await?;
         let mut chunk = Vec::with_capacity(1000);
         let mut total_rows = 0;
@@ -47,7 +47,9 @@ pub async fn migrate_data(
             total_rows += 1;
 
             if chunk.len() >= 1000 {
-                target.insert_chunk(&table.name, dry_run,chunk).await?;
+                target
+                    .insert_chunk(&table.name, dry_run, halt_on_error, chunk)
+                    .await?;
                 chunk = Vec::with_capacity(1000);
                 if !dry_run {
                     pb.set_position(total_rows);
@@ -57,7 +59,9 @@ pub async fn migrate_data(
 
         // Letzten Rest verarbeiten
         if !chunk.is_empty() {
-            target.insert_chunk(&table.name, dry_run,chunk).await?;
+            target
+                .insert_chunk(&table.name, dry_run, halt_on_error, chunk)
+                .await?;
             if !dry_run {
                 pb.set_position(total_rows);
             }

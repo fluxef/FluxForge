@@ -70,5 +70,9 @@ pub enum Commands {
         /// Output SQL statements without executing them
         #[arg(long)]
         dry_run: bool,
+        
+        // stop data transfer if sql error writing sql data
+        #[arg(long)]
+        halt_on_error: bool,
     },
 }

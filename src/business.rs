@@ -129,6 +129,7 @@ pub async fn handle_command(
             target,
             config,
             dry_run,
+            halt_on_error,
         } => {
             // Konfiguration laden
             let forge_config = load_config(config.clone())?;
@@ -168,6 +169,7 @@ pub async fn handle_command(
                 &source_schema,
                 dry_run,
                 verbose,
+                halt_on_error,
             )
             .await?;
 

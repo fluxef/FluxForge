@@ -63,6 +63,7 @@ pub trait DatabaseDriver: Send + Sync {
         &self,
         table_name: &str,
         dry_run: bool,
+        halt_on_error: bool,
         chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
     ) -> Result<(), Box<dyn std::error::Error>>;
     

@@ -17,8 +17,20 @@ pub async fn handle_command(
             // Konfiguration laden (Nutzt Standard, wenn keine Datei angegeben)
             let forge_config = load_config(config.clone())?;
             if verbose {
-                let mysql_count = forge_config.mysql.as_ref().and_then(|m| m.types.as_ref()).and_then(|t| t.on_read.as_ref()).map(|t| t.len()).unwrap_or(0);
-                let pg_count = forge_config.postgres.as_ref().and_then(|m| m.types.as_ref()).and_then(|t| t.on_read.as_ref()).map(|t| t.len()).unwrap_or(0);
+                let mysql_count = forge_config
+                    .mysql
+                    .as_ref()
+                    .and_then(|m| m.types.as_ref())
+                    .and_then(|t| t.on_read.as_ref())
+                    .map(|t| t.len())
+                    .unwrap_or(0);
+                let pg_count = forge_config
+                    .postgres
+                    .as_ref()
+                    .and_then(|m| m.types.as_ref())
+                    .and_then(|t| t.on_read.as_ref())
+                    .map(|t| t.len())
+                    .unwrap_or(0);
                 println!(
                     "Configuration loaded (Mappings: MySQL={}, Postgres={})",
                     mysql_count, pg_count
@@ -61,7 +73,6 @@ pub async fn handle_command(
             dry_run,
             allow_destructive,
         } => {
-
             let forge_config = load_config(config.clone())?;
 
             let mut source_driver = None;
@@ -126,7 +137,7 @@ pub async fn handle_command(
             let target_driver = drivers::create_driver(&target).await?;
 
             if !target_driver.db_is_empty().await? {
-                return Err("ABBRUCH: Die Zieldatenbank enthält bereits Daten. \
+                return Err("ABBRUCH: Die Zieldatenbank ist nicht leer.  \
                     Um Datenverlust zu vermeiden, führt FluxForge keine Migration in nicht-leere Datenbanken durch.".into());
             }
 
@@ -141,7 +152,7 @@ pub async fn handle_command(
 
             // target schema in DB erstellen
             let statements = target_driver
-                .diff_schema(&source_schema, &forge_config, dry_run,true)
+                .diff_schema(&source_schema, &forge_config, dry_run, true)
                 .await?;
 
             if dry_run {
@@ -150,16 +161,15 @@ pub async fn handle_command(
                     println!("{}", sql);
                 }
                 println!("--- DRY RUN END: Geplante Strukturänderungen ---");
-            } else {
-                ops::migrate_data(
-                    source_driver.as_ref(),
-                    target_driver.as_ref(),
-                    &source_schema,
-                    dry_run,
-                    verbose,
-                )
-                .await?;
             }
+            ops::migrate_data(
+                source_driver.as_ref(),
+                target_driver.as_ref(),
+                &source_schema,
+                dry_run,
+                verbose,
+            )
+            .await?;
 
             Ok(())
         }

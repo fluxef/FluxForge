@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 // --- Konfigurations-Strukturen (für mapping.toml) ---
 
@@ -168,3 +169,21 @@ pub struct ForgeForeignKey {
     pub on_delete: Option<String>,
     pub on_update: Option<String>,
 }
+
+// --- UNIVERSAL-TYP ---
+#[derive(Debug, Clone)]
+pub enum ForgeUniversalValue {
+    Integer(i64),
+    UnsignedInteger(u64),
+    Float(f64),
+    Text(String),
+    Binary(Vec<u8>),
+    Boolean(bool),
+    Year(i32),
+    Time(NaiveTime),
+    Date(NaiveDate),
+    DateTime(NaiveDateTime),
+    Json(serde_json::Value),
+    Null,
+}
+

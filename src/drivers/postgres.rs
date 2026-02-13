@@ -1,10 +1,11 @@
 use std::error::Error;
-use crate::core::{ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeSchema};
+use crate::core::{ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeSchema, ForgeUniversalValue};
 use crate::{DatabaseDriver, ForgeColumn, ForgeTable};
 use async_trait::async_trait;
 use sqlx::{PgPool, Row, Column};
 use std::pin::Pin;
 use futures::{Stream, StreamExt};
+use indexmap::IndexMap;
 
 pub struct PostgresDriver {
     pub pool: PgPool,
@@ -197,9 +198,10 @@ impl DatabaseDriver for PostgresDriver {
         Ok(all_statements)
     }
 
-    async fn insert_chunk(
+    async fn insert_chunka(
         &self,
         table_name: &str,
+        dry_run: bool,
         chunk: Vec<serde_json::Value>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if chunk.is_empty() {
@@ -259,7 +261,7 @@ impl DatabaseDriver for PostgresDriver {
         Ok(())
     }
 
-    async fn stream_table_data(
+    async fn stream_table_dataa(
         &self,
         table_name: &str,
     ) -> Result<
@@ -299,6 +301,26 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn diff_schema(&self, schema: &ForgeSchema, config: &ForgeConfig, execute: bool, destructive: bool) -> Result<Vec<String>, Box<dyn Error>> {
+        todo!()
+    }
+
+    async fn stream_table_data(
+        &self,
+        table_name: &str,
+    ) -> Result<
+        Pin<
+            Box<
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>>
+                    + Send
+                    + '_,
+            >,
+        >,
+        Box<dyn Error>,
+    > {
+        todo!()
+    }
+
+    async fn insert_chunk(&self, table_name: &str, dry_run: bool, chunk: Vec<IndexMap<String, ForgeUniversalValue>>) -> Result<(), Box<dyn std::error::Error>> {
         todo!()
     }
 }

@@ -4,12 +4,13 @@ pub mod drivers;
 pub mod ops;
 
 // Re-export für bequemeren Zugriff: use fluxforge::ForgeSchema;
-use crate::core::ForgeConfig;
+use crate::core::{ForgeConfig, ForgeUniversalValue};
 pub use crate::core::{ForgeColumn, ForgeSchema, ForgeTable};
 use async_trait::async_trait;
 // Empfohlen für asynchrone Traits
 use futures::Stream;
 use std::pin::Pin;
+use indexmap::IndexMap;
 
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
@@ -41,7 +42,7 @@ pub trait DatabaseDriver: Send + Sync {
 
 
     // Gibt einen Stream von Zeilen zurück
-    async fn stream_table_data(
+    async fn stream_table_dataa(
         &self,
         table_name: &str,
     ) -> Result<
@@ -49,10 +50,26 @@ pub trait DatabaseDriver: Send + Sync {
         Box<dyn std::error::Error>,
     >;
 
+    async fn stream_table_data(
+        &self,
+        table_name: &str,
+    ) -> Result<
+        Pin<Box<dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>> + Send + '_>>,
+        Box<dyn std::error::Error>,
+    >;
+
     // Schreibt ein Paket von Zeilen in die Ziel-DB
     async fn insert_chunk(
         &self,
         table_name: &str,
+        dry_run: bool,
+        chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    
+    async fn insert_chunka(
+        &self,
+        table_name: &str,
+        dry_run: bool,
         chunk: Vec<serde_json::Value>,
     ) -> Result<(), Box<dyn std::error::Error>>;
 

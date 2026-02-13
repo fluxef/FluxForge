@@ -1,13 +1,20 @@
 use crate::core::{
     ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeMetadata, ForgeSchema, ForgeTable,
+    ForgeUniversalValue,
 };
 use crate::{DatabaseDriver, ForgeColumn};
 use async_trait::async_trait;
+use chrono::NaiveDateTime;
 use futures::{Stream, StreamExt};
-use sqlx::{Column, MySqlPool, Row};
+use indexmap::IndexMap;
+use sqlx::{
+    Column, Row, TypeInfo,
+    mysql::{MySqlPool, MySqlRow},
+};
 use std::collections::HashMap;
 use std::error::Error;
 use std::pin::Pin;
+use serde_json::Value;
 
 pub struct MySqlDriver {
     pub pool: MySqlPool,
@@ -95,13 +102,13 @@ impl MySqlDriver {
         let mut columns = Vec::new();
         let target_types = config.get_type_list("mysql", "on_read");
 
-        let unsigned_int_to_bigint = config.mysql
+        let unsigned_int_to_bigint = config
+            .mysql
             .as_ref()
             .and_then(|c| c.rules.as_ref())
             .and_then(|r| r.on_read.as_ref())
             .and_then(|o| o.unsigned_int_to_bigint)
             .unwrap_or(false);
-
 
         for row in rows {
             // Hilfsfunktion zum sicheren Lesen von (VAR)BINARY Metadaten
@@ -139,12 +146,9 @@ impl MySqlDriver {
             // und das evtl. wieder für das zurückschreiben nach mysql brauchen
             let mut is_unsigned = mysql_column_type.to_lowercase().contains("unsigned");
 
-            if mysql_data_type.contains("int")
-                && is_unsigned
-                && unsigned_int_to_bigint
-            {
+            if mysql_data_type.contains("int") && is_unsigned && unsigned_int_to_bigint {
                 target_data_type = "bigint".to_string();
-                is_unsigned=false;
+                is_unsigned = false;
             }
             // ENDE Unsigned Regel anwenden
 
@@ -315,7 +319,7 @@ impl MySqlDriver {
                     ret.push_str(" unsigned");
                 }
             }
-            
+
             "varchar" | "char" => {
                 if let Some(l) = field.length {
                     ret.push_str(&format!("({})", l));
@@ -622,6 +626,203 @@ impl MySqlDriver {
         // Wandle Bytes in UTF-8 um, ignoriere ungültige Zeichen
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
+
+    /// Behandelt MySQL-Datumswerte und fängt 0000-00-00 Fehler ab
+    pub fn handle_datetime(&self, row: &MySqlRow, index: usize) -> ForgeUniversalValue {
+        match row.try_get::<Option<NaiveDateTime>, _>(index) {
+            Ok(Some(dt)) => ForgeUniversalValue::DateTime(dt),
+            Ok(None) => ForgeUniversalValue::Null,
+            Err(_) => {
+                // Check auf MySQL "Zero-Date"
+                let raw: Option<String> = row.try_get(index).ok();
+                match raw {
+                    Some(s) if s.starts_with("0000-00-00") => ForgeUniversalValue::Null,
+                    _ => ForgeUniversalValue::Null,
+                }
+            }
+        }
+    }
+
+    /// Mappt eine MySQL-Zeile inForgeUniversalValue-Struktur
+    fn map_row_to_universal_values(&self, row: &MySqlRow) -> Vec<ForgeUniversalValue> {
+        row.columns()
+            .iter()
+            .map(|col| {
+                let i = col.ordinal();
+
+                let type_name = col.type_info().name().to_uppercase();
+
+                match type_name.as_str() {
+                    "DATETIME" | "TIMESTAMP" => self.handle_datetime(row, i),
+
+                    "DATE" => row
+                        .try_get::<Option<chrono::NaiveDate>, _>(i)
+                        .ok()
+                        .flatten()
+                        .map(ForgeUniversalValue::Date)
+                        .unwrap_or(ForgeUniversalValue::Null),
+
+                    "TIME" => {
+                        row.try_get::<Option<chrono::NaiveTime>, _>(i)
+                            .ok()
+                            .flatten()
+                            .map(ForgeUniversalValue::Time) // Falls dein Enum das hat
+                            .unwrap_or(ForgeUniversalValue::Null)
+                    }
+
+                    "YEAR" => {
+                        // YEAR wird als i32 behandelt
+                        row.try_get::<Option<i32>, _>(i)
+                            .ok()
+                            .flatten()
+                            .map(ForgeUniversalValue::Year)
+                            .unwrap_or(ForgeUniversalValue::Null)
+                    }
+
+                    "TINYINT(1)" | "BOOLEAN" | "BOOL" => row
+                        .try_get::<Option<bool>, _>(i)
+                        .ok()
+                        .flatten()
+                        .map(ForgeUniversalValue::Boolean)
+                        .unwrap_or(ForgeUniversalValue::Null),
+
+                    "TINYINT" | "SMALLINT" | "INT" | "INTEGER" | "MEDIUMINT" | "BIGINT"
+                    | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "INT UNSIGNED"
+                    | "BIGINT UNSIGNED" => {
+                        let is_unsigned =
+                            col.type_info().name().to_uppercase().contains("UNSIGNED");
+
+                        if is_unsigned {
+                            row.try_get::<Option<u64>, _>(i)
+                                .ok()
+                                .flatten()
+                                .map(ForgeUniversalValue::UnsignedInteger) // Nutzt u64
+                                .unwrap_or(ForgeUniversalValue::Null)
+                        } else {
+                            row.try_get::<Option<i64>, _>(i)
+                                .ok()
+                                .flatten()
+                                .map(ForgeUniversalValue::Integer) // Nutzt i64
+                                .unwrap_or(ForgeUniversalValue::Null)
+                        }
+                    }
+
+                    "JSON" => row
+                        .try_get::<Option<serde_json::Value>, _>(i)
+                        .ok()
+                        .flatten()
+                        .map(ForgeUniversalValue::Json)
+                        .unwrap_or(ForgeUniversalValue::Null),
+
+                    "DOUBLE" | "FLOAT" | "DECIMAL" => row
+                        .try_get::<Option<f64>, _>(i)
+                        .ok()
+                        .flatten()
+                        .map(ForgeUniversalValue::Float)
+                        .unwrap_or(ForgeUniversalValue::Null),
+                    "BLOB" | "VARBINARY" | "BINARY" => row
+                        .try_get::<Option<Vec<u8>>, _>(i)
+                        .ok()
+                        .flatten()
+                        .map(ForgeUniversalValue::Binary)
+                        .unwrap_or(ForgeUniversalValue::Null),
+
+                    //  Alles andere (String-Fallback für VARCHAR, TEXT, ENUM, etc.)
+                    _ => {
+                        if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
+                            ForgeUniversalValue::Text(s)
+                        } else if let Some(s) = self.get_string_at_index(row, i) {
+                            // Fallback über deine Methode, falls try_get fehlschlägt
+                            ForgeUniversalValue::Text(s)
+                        } else if let Ok(Some(bin)) = row.try_get::<Option<Vec<u8>>, _>(i) {
+                            // Letzter Versuch: Falls es kein valider String war, als Binary retten
+                            ForgeUniversalValue::Binary(bin)
+                        } else {
+                            ForgeUniversalValue::Null
+                        }
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Konvertiert eine MySqlRow-Spalte in ein serde_json::Value
+    pub fn sqlx_value_to_json(&self, row: &MySqlRow, index: usize) -> serde_json::Value {
+        use sqlx::TypeInfo;
+
+        let column = &row.columns()[index];
+        let type_name = column.type_info().name().to_uppercase();
+
+        // NULL-Check
+        // try_get::<Option<String>, _> ist ein einfacher Weg um auf NULL zu prüfen
+        // aber wir können auch direkt schauen ob der Wert vorhanden ist.
+        // SQLx gibt bei NULL meistens einen Error zurück wenn man nicht Option nutzt.
+
+        match type_name.as_str() {
+            "TINYINT" | "SMALLINT" | "INT" | "INTEGER" | "MEDIUMINT" | "BIGINT" => {
+                if let Ok(val) = row.try_get::<Option<i64>, _>(index) {
+                    return val
+                        .map(|v| serde_json::Value::Number(v.into()))
+                        .unwrap_or(serde_json::Value::Null);
+                }
+                // Unsigned Handling
+                if let Ok(val) = row.try_get::<Option<u64>, _>(index) {
+                    return val
+                        .map(|v| serde_json::Value::Number(v.into()))
+                        .unwrap_or(serde_json::Value::Null);
+                }
+            }
+            "DECIMAL" | "FLOAT" | "DOUBLE" => {
+                if let Ok(val) = row.try_get::<Option<f64>, _>(index) {
+                    return val
+                        .map(|v| {
+                            serde_json::Number::from_f64(v)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .unwrap_or(serde_json::Value::Null);
+                }
+            }
+            "BIT" | "BOOLEAN" | "BOOL" => {
+                if let Ok(val) = row.try_get::<Option<bool>, _>(index) {
+                    return val
+                        .map(serde_json::Value::Bool)
+                        .unwrap_or(serde_json::Value::Null);
+                }
+            }
+            "DATE" | "DATETIME" | "TIMESTAMP" | "TIME" | "YEAR" => {
+                // Diese Typen als String extrahieren (sqlx konvertiert sie oft automatisch)
+                if let Ok(val) = row.try_get::<Option<String>, _>(index) {
+                    return val
+                        .map(serde_json::Value::String)
+                        .unwrap_or(serde_json::Value::Null);
+                }
+                // Fallback: Wenn String-Konvertierung nicht direkt geht, über Bytes
+                if let Some(s) = self.get_string_at_index(row, index) {
+                    return serde_json::Value::String(s);
+                }
+            }
+            "JSON" => {
+                if let Ok(val) = row.try_get::<Option<serde_json::Value>, _>(index) {
+                    return val.unwrap_or(serde_json::Value::Null);
+                }
+            }
+            _ => {
+                // Alles andere als String (VARCHAR, TEXT, BLOB, ENUM, ...)
+                if let Ok(val) = row.try_get::<Option<String>, _>(index) {
+                    return val
+                        .map(serde_json::Value::String)
+                        .unwrap_or(serde_json::Value::Null);
+                }
+                // Fallback für binäre Typen
+                if let Some(s) = self.get_string_at_index(row, index) {
+                    return serde_json::Value::String(s);
+                }
+            }
+        }
+
+        serde_json::Value::Null
+    }
 }
 
 #[async_trait]
@@ -746,39 +947,48 @@ impl DatabaseDriver for MySqlDriver {
         Ok(all_statements)
     }
 
+    async fn stream_table_dataa(&self, table_name: &str) -> Result<Pin<Box<dyn Stream<Item=Result<Value, sqlx::Error>> + Send>>, Box<dyn Error>> {
+        todo!()
+    }
+
     async fn stream_table_data(
         &self,
         table_name: &str,
     ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<serde_json::Value, sqlx::Error>> + Send>>,
+        Pin<Box<dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>> + Send + '_>>,
         Box<dyn std::error::Error>,
     > {
-        // Wir nutzen Backticks für MySQL-Tabellennamen (Reserved Words Schutz)
-        let query = format!("SELECT * FROM `{}`", table_name);
+        let query_string = format!("SELECT * FROM `{}`", table_name);
 
-        let stream = sqlx::query(&query)
+        // Wir erzeugen den Stream direkt aus der Query.
+        // sqlx::query() akzeptiert auch String, nicht nur &str.
+        let stream = sqlx::query(query_string.as_str())
             .fetch(&self.pool)
-            .map(|row_result| {
+            .map(move |row_result| {
                 row_result.map(|row: sqlx::mysql::MySqlRow| {
-                    let mut map = serde_json::Map::new();
-                    for col in row.columns() {
-                        let name = col.name();
-                        let val: serde_json::Value =
-                            row.try_get(name).unwrap_or(serde_json::Value::Null);
-                        map.insert(name.to_string(), val);
+                    let values = self.map_row_to_universal_values(&row);
+                    let mut row_map = IndexMap::new();
+                    for (col, val) in row.columns().iter().zip(values) {
+                        row_map.insert(col.name().to_string(), val);
                     }
-                    serde_json::Value::Object(map)
+                    row_map
                 })
-            })
-            .collect::<Vec<_>>()
-            .await;
+            });
 
-        Ok(Box::pin(futures::stream::iter(stream)))
+        // 3. Um Lifetime-Probleme zu vermeiden, nutzen wir oft 'map',
+        // aber der Schlüssel ist, dass query_string lange genug lebt.
+        // Falls der Compiler immer noch meckert, nutzen wir sqlx::query_with:
+        Ok(Box::pin(stream))
     }
 
-    async fn insert_chunk(
+    async fn insert_chunk(&self, table_name: &str, dry_run: bool, chunk: Vec<IndexMap<String, ForgeUniversalValue>>) -> Result<(), Box<dyn std::error::Error>> {
+        todo!()
+    }
+
+    async fn insert_chunka(
         &self,
         table_name: &str,
+        dry_run: bool,
         chunk: Vec<serde_json::Value>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if chunk.is_empty() {
@@ -808,33 +1018,45 @@ impl DatabaseDriver for MySqlDriver {
         }
         sql.push_str(&placeholders.join(", "));
 
-        // 3. Query-Objekt erstellen und Werte binden
-        let mut query = sqlx::query(&sql);
+        if dry_run {
+            println!("SQL = {}", sql);
+        } else {
+            // 3. Query-Objekt erstellen und Werte binden
+            let mut query = sqlx::query(&sql);
 
-        for row in chunk {
-            let obj = row.as_object().ok_or("Invalid row format")?;
-            for col in &columns {
-                let val = obj.get(col).cloned().unwrap_or(serde_json::Value::Null);
+            for row in &chunk {
+                let obj = row.as_object().ok_or("Invalid row format")?;
+                for col in &columns {
+                    let val = obj.get(col).cloned().unwrap_or(serde_json::Value::Null);
 
-                // Wir binden die Werte basierend auf ihrem JSON-Typ
-                query = match val {
-                    serde_json::Value::Null => query.bind(None::<String>),
-                    serde_json::Value::Bool(b) => query.bind(b),
-                    serde_json::Value::Number(n) => {
-                        if let Some(i) = n.as_i64() {
-                            query.bind(i)
-                        } else {
-                            query.bind(n.as_f64())
+                    // Wir binden die Werte basierend auf ihrem JSON-Typ
+                    query = match val {
+                        serde_json::Value::Null => query.bind(None::<String>),
+                        serde_json::Value::Bool(b) => query.bind(b),
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                query.bind(i)
+                            } else if let Some(u) = n.as_u64() {
+                                query.bind(u)
+                            } else {
+                                query.bind(n.as_f64())
+                            }
                         }
-                    }
-                    serde_json::Value::String(s) => query.bind(s),
-                    _ => query.bind(val.to_string()), // Fallback für Arrays/Objekte als String
-                };
+                        serde_json::Value::String(s) => query.bind(s),
+                        _ => query.bind(val.to_string()), // Fallback für Arrays/Objekte als String
+                    };
+                }
+            }
+            // 4. In MySQL ausführen
+            if let Err(e) = query.execute(&self.pool).await {
+                eprintln!("Error executing INSERT on table `{}`: {}", table_name, e);
+                eprintln!("Columns: {}", columns.join(", "));
+                for (i, row) in chunk.iter().enumerate() {
+                    eprintln!("Row {}: {}", i, row);
+                }
+                return Err(e.into());
             }
         }
-
-        // 4. In MySQL ausführen
-        query.execute(&self.pool).await?;
 
         Ok(())
     }

@@ -9,8 +9,8 @@ pub async fn migrate_data(
     source: &dyn DatabaseDriver,
     target: &dyn DatabaseDriver,
     schema: &ForgeSchema,
-    _dry_run: bool,
-    _verbose: bool,
+    dry_run: bool,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let multi = MultiProgress::new();
 
@@ -20,14 +20,23 @@ pub async fn migrate_data(
     )?
         .progress_chars("#>-");
 
+    if (verbose) {
+        println!("Starte mit Datenreplikation");
+    }
+
     for table in &schema.tables {
         // Wir wissen bei einem Stream oft nicht die Gesamtanzahl (len),
         // es sei denn, wir machen vorher ein SELECT COUNT(*).
         // Hier nutzen wir eine ProgressBar, die mitwächst.
-        let pb = multi.add(ProgressBar::new_spinner());
-        pb.set_style(style.clone());
-        pb.set_message(format!("Forging table: {}", table.name));
+        if (verbose) {
+            println!("Starte Replikation von {}", table.name);
+        }
 
+        
+            let pb = multi.add(ProgressBar::new_spinner());
+            pb.set_style(style.clone());
+            pb.set_message(format!("Forging table: {}", table.name));
+        
         let mut data_stream = source.stream_table_data(&table.name).await?;
         let mut chunk = Vec::with_capacity(1000);
         let mut total_rows = 0;
@@ -38,19 +47,23 @@ pub async fn migrate_data(
             total_rows += 1;
 
             if chunk.len() >= 1000 {
-                target.insert_chunk(&table.name, chunk).await?;
+                target.insert_chunk(&table.name, dry_run,chunk).await?;
                 chunk = Vec::with_capacity(1000);
-                pb.set_position(total_rows);
+                if !dry_run {
+                    pb.set_position(total_rows);
+                }
             }
         }
 
         // Letzten Rest verarbeiten
         if !chunk.is_empty() {
-            target.insert_chunk(&table.name, chunk).await?;
-            pb.set_position(total_rows);
+            target.insert_chunk(&table.name, dry_run,chunk).await?;
+            if !dry_run {
+                pb.set_position(total_rows);
+            }
         }
 
-        pb.finish_with_message(format!("✅ Done: {} ({} rows)", table.name, total_rows));
+        pb.finish_with_message(format!("Done: {} ({} rows)", table.name, total_rows));
     }
 
     Ok(())

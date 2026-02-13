@@ -170,7 +170,7 @@ pub struct ForgeForeignKey {
     pub on_update: Option<String>,
 }
 
-// --- UNIVERSAL-TYP ---
+// --- UNIVERSAL-Intermediate-TYP ---
 #[derive(Debug, Clone)]
 pub enum ForgeUniversalValue {
     Integer(i64),

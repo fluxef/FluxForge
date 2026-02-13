@@ -17,6 +17,7 @@ use std::error::Error;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::pin::Pin;
+use crate::ops::log_error_to_file;
 
 pub struct MySqlDriver {
     pub pool: MySqlPool,
@@ -25,6 +26,29 @@ pub struct MySqlDriver {
 impl MySqlDriver {
     // Diese Funktionen sind nur innerhalb dieses Moduls sichtbar
     // und gehören NICHT zum öffentlichen Trait.
+
+    fn bind_universal<'q>(
+        &self,
+        query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
+        val: &'q ForgeUniversalValue,
+    ) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
+        match val {
+            ForgeUniversalValue::Integer(i) => query.bind(i),
+            ForgeUniversalValue::UnsignedInteger(u) => query.bind(u),
+            ForgeUniversalValue::Float(f) => query.bind(f),
+            ForgeUniversalValue::Text(s) => query.bind(s),
+            ForgeUniversalValue::Binary(bin) => query.bind(bin),
+            ForgeUniversalValue::Boolean(b) => query.bind(b),
+            ForgeUniversalValue::Year(y) => query.bind(y),
+            ForgeUniversalValue::Time(t) => query.bind(t),
+            ForgeUniversalValue::Date(d) => query.bind(d),
+            ForgeUniversalValue::DateTime(dt) => query.bind(dt),
+            ForgeUniversalValue::Json(j) => query.bind(j),
+            ForgeUniversalValue::Null => query.bind(None::<String>),
+        }
+    }
+
+
     pub async fn fetch_tables(&self) -> Result<Vec<ForgeTable>, Box<dyn std::error::Error>> {
         // SHOW TABLE STATUS gibt uns Name und Comment
         let rows = sqlx::query("SHOW TABLE STATUS")
@@ -949,13 +973,6 @@ impl DatabaseDriver for MySqlDriver {
         Ok(all_statements)
     }
 
-    async fn stream_table_data_old(
-        &self,
-        table_name: &str,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<Value, sqlx::Error>> + Send>>, Box<dyn Error>>
-    {
-        todo!()
-    }
 
     async fn stream_table_data(
         &self,
@@ -1033,7 +1050,7 @@ impl DatabaseDriver for MySqlDriver {
                     let val = row.get(col).unwrap_or(&ForgeUniversalValue::Null);
 
                     // Binding basierend auf  Enum
-                    query = bind_universal(query, val);
+                    query = self.bind_universal(query, val);
                 }
             }
 
@@ -1060,7 +1077,7 @@ impl DatabaseDriver for MySqlDriver {
 
                     for col in &columns {
                         let val = row_map.get(col).unwrap_or(&ForgeUniversalValue::Null);
-                        single_query = bind_universal(single_query, val);
+                        single_query = self.bind_universal(single_query, val);
                     }
 
                     // Wir führen die Zeile einzeln aus
@@ -1081,115 +1098,5 @@ impl DatabaseDriver for MySqlDriver {
 
         Ok(())
     }
-
-    async fn insert_chunk_old(
-        &self,
-        table_name: &str,
-        dry_run: bool,
-        chunk: Vec<serde_json::Value>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if chunk.is_empty() {
-            return Ok(());
-        }
-
-        // 1. Spaltennamen aus dem ersten Datensatz extrahieren
-        let first_row = chunk
-            .first()
-            .ok_or("Chunk is empty")?
-            .as_object()
-            .ok_or("Invalid row format")?;
-        let columns: Vec<String> = first_row.keys().cloned().collect();
-        let column_names = columns
-            .iter()
-            .map(|c| format!("`{}`", c))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        // 2. SQL-Statement vorbereiten: INSERT INTO table (col1, col2) VALUES (?, ?), (?, ?) ...
-        let mut sql = format!("INSERT INTO `{}` ({}) VALUES ", table_name, column_names);
-
-        let mut placeholders = Vec::new();
-        for _ in 0..chunk.len() {
-            let row_placeholders = vec!["?"; columns.len()].join(", ");
-            placeholders.push(format!("({})", row_placeholders));
-        }
-        sql.push_str(&placeholders.join(", "));
-
-        if dry_run {
-            println!("SQL = {}", sql);
-        } else {
-            // 3. Query-Objekt erstellen und Werte binden
-            let mut query = sqlx::query(&sql);
-
-            for row in &chunk {
-                let obj = row.as_object().ok_or("Invalid row format")?;
-                for col in &columns {
-                    let val = obj.get(col).cloned().unwrap_or(serde_json::Value::Null);
-
-                    // Wir binden die Werte basierend auf ihrem JSON-Typ
-                    query = match val {
-                        serde_json::Value::Null => query.bind(None::<String>),
-                        serde_json::Value::Bool(b) => query.bind(b),
-                        serde_json::Value::Number(n) => {
-                            if let Some(i) = n.as_i64() {
-                                query.bind(i)
-                            } else if let Some(u) = n.as_u64() {
-                                query.bind(u)
-                            } else {
-                                query.bind(n.as_f64())
-                            }
-                        }
-                        serde_json::Value::String(s) => query.bind(s),
-                        _ => query.bind(val.to_string()), // Fallback für Arrays/Objekte als String
-                    };
-                }
-            }
-            // 4. In MySQL ausführen
-            if let Err(e) = query.execute(&self.pool).await {
-                eprintln!("Error executing INSERT on table `{}`: {}", table_name, e);
-                eprintln!("Columns: {}", columns.join(", "));
-                for (i, row) in chunk.iter().enumerate() {
-                    eprintln!("Row {}: {}", i, row);
-                }
-                return Err(e.into());
-            }
-        }
-
-        Ok(())
-    }
 }
 
-/// Schreibt problematische Zeilen in eine lokale .log Datei
-fn log_error_to_file(table: &str, row_data: &String, error_msg: &str) {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("migration_errors.log")
-        .expect("Konnte Log-Datei nicht öffnen");
-
-    let line = format!(
-        "TABLE: {} | ERROR: {} | DATA: {:?}\n",
-        table, error_msg, row_data
-    );
-    let _ = file.write_all(line.as_bytes());
-}
-
-fn bind_universal<'q>(
-    query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
-    val: &'q ForgeUniversalValue,
-) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
-    match val {
-        ForgeUniversalValue::Integer(i) => query.bind(i),
-        ForgeUniversalValue::UnsignedInteger(u) => query.bind(u),
-        ForgeUniversalValue::Float(f) => query.bind(f),
-        ForgeUniversalValue::Text(s) => query.bind(s),
-        ForgeUniversalValue::Binary(bin) => query.bind(bin),
-        ForgeUniversalValue::Boolean(b) => query.bind(b),
-        ForgeUniversalValue::Year(y) => query.bind(y),
-        ForgeUniversalValue::Time(t) => query.bind(t),
-        ForgeUniversalValue::Date(d) => query.bind(d),
-        ForgeUniversalValue::DateTime(dt) => query.bind(dt),
-        ForgeUniversalValue::Json(j) => query.bind(j),
-        ForgeUniversalValue::Null => query.bind(None::<String>),
-    }
-}

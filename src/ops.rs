@@ -4,6 +4,8 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use petgraph::algo::toposort;
 use petgraph::graph::DiGraph;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 pub async fn migrate_data(
     source: &dyn DatabaseDriver,
@@ -117,3 +119,21 @@ pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTabl
         }
     }
 }
+
+
+/// Schreibt problematische Zeilen in eine lokale .log Datei
+pub fn log_error_to_file(table: &str, row_data: &String, error_msg: &str) {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("migration_errors.log")
+        .expect("Konnte Log-Datei nicht öffnen");
+
+    let line = format!(
+        "TABLE: {} | ERROR: {} | DATA: {:?}\n",
+        table, error_msg, row_data
+    );
+    let _ = file.write_all(line.as_bytes());
+}
+
+

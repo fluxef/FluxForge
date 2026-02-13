@@ -4,13 +4,13 @@ pub mod drivers;
 pub mod ops;
 
 // Re-export für bequemeren Zugriff: use fluxforge::ForgeSchema;
-use crate::core::{ForgeConfig, ForgeUniversalValue};
 pub use crate::core::{ForgeColumn, ForgeSchema, ForgeTable};
+use crate::core::{ForgeConfig, ForgeUniversalValue};
 use async_trait::async_trait;
 // Empfohlen für asynchrone Traits
 use futures::Stream;
-use std::pin::Pin;
 use indexmap::IndexMap;
+use std::pin::Pin;
 
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
@@ -37,24 +37,20 @@ pub trait DatabaseDriver: Send + Sync {
         schema: &ForgeSchema,
         config: &ForgeConfig,
         dry_run: bool,
-        destructive:bool,
+        destructive: bool,
     ) -> Result<Vec<String>, Box<dyn std::error::Error>>;
-
-
-    // Gibt einen Stream von Zeilen zurück
-    async fn stream_table_data_old(
-        &self,
-        table_name: &str,
-    ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<serde_json::Value, sqlx::Error>> + Send>>,
-        Box<dyn std::error::Error>,
-    >;
 
     async fn stream_table_data(
         &self,
         table_name: &str,
     ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>> + Send + '_>>,
+        Pin<
+            Box<
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>>
+                    + Send
+                    + '_,
+            >,
+        >,
         Box<dyn std::error::Error>,
     >;
 
@@ -66,16 +62,4 @@ pub trait DatabaseDriver: Send + Sync {
         halt_on_error: bool,
         chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
     ) -> Result<(), Box<dyn std::error::Error>>;
-    
-    async fn insert_chunk_old(
-        &self,
-        table_name: &str,
-        dry_run: bool,
-        chunk: Vec<serde_json::Value>,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-
-    // Streamt Daten von einem Treiber zum anderen
-    // (Hier nutzen wir einen vereinfachten Ansatz für das Beispiel)
-    // async fn stream_rows(&self, table: &str) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>>;
-    // async fn insert_rows(&self, table: &str, rows: Vec<serde_json::Value>) -> Result<(), Box<dyn std::error::Error>>;
 }

@@ -1,19 +1,20 @@
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
-use sqlx::{mysql::{MySqlPool, MySqlRow}, Column, Row, TypeInfo, ValueRef};
+use sqlx::{
+    mysql::{MySqlPool, MySqlRow}, Column, Row, TypeInfo,
+    ValueRef,
+};
 use std::collections::HashMap;
 use std::error::Error;
 use std::pin::Pin;
 
 use crate::core::{
-    ForgeConfig, ForgeForeignKey, ForgeIndex, ForgeMetadata, ForgeSchema, ForgeTable,
+    ForgeConfig, ForgeError, ForgeForeignKey, ForgeIndex, ForgeMetadata, ForgeSchema, ForgeTable,
     ForgeUniversalValue,
 };
 use crate::ops::log_error_to_file;
 use crate::{DatabaseDriver, ForgeColumn};
-
 
 pub struct MySqlDriver {
     pub pool: MySqlPool,
@@ -28,7 +29,6 @@ impl MySqlDriver {
         query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
         val: &'q ForgeUniversalValue,
     ) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
-
         match val {
             ForgeUniversalValue::Integer(i) => query.bind(i),
             ForgeUniversalValue::UnsignedInteger(u) => query.bind(u),
@@ -655,150 +655,140 @@ impl MySqlDriver {
 
     /// special handling for empty mysql date and datetime values that start with 0000-00-00
     /// postgres does not understand those "0000-00-00" values
-    pub fn handle_datetime(&self, row: &MySqlRow, index: usize) -> ForgeUniversalValue {
-
-        // 1. try Type based reading
+    pub fn handle_datetime(
+        &self,
+        row: &MySqlRow,
+        index: usize,
+    ) -> Result<ForgeUniversalValue, sqlx::Error> {
         let column = &row.columns()[index];
         let type_name = column.type_info().name();
 
+        // try normal decode
         if type_name == "TIMESTAMP" {
-            if let Ok(Some(dt_utc)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(index) {
-                return ForgeUniversalValue::DateTime(dt_utc.naive_utc());
+            // with TIMESTAMP tries sqlx often UTC
+            if let Ok(dt_utc) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
+                return Ok(ForgeUniversalValue::DateTime(dt_utc.naive_utc()));
             }
         } else {
-            if let Ok(Some(dt)) = row.try_get::<Option<NaiveDateTime>, _>(index) {
-                return ForgeUniversalValue::DateTime(dt);
+            if let Ok(dt) = row.try_get::<chrono::NaiveDateTime, _>(index) {
+                return Ok(ForgeUniversalValue::DateTime(dt));
             }
         }
 
-        // 2. we read the raw data binaries
-        // a MySQL Zero-Date in binary protocol is  0-Bytes (length 0 or only zeros).
-        let raw_value = row.try_get_raw(index).ok();
+        // special case for MySQL "Zero-Dates" or decode error
+        let raw_value = row.try_get_raw(index)?; // returns sqlx::Error zurück, if it fails
 
-        if let Some(raw) = raw_value {
-            if raw.is_null() {
-                return ForgeUniversalValue::ZeroDateTime;
-            }
-
-            // sqlx colud not convernt the value to wandeln.
-            // we check zero-date, string-fallback is our last try
-            if let Ok(Some(s)) = row.try_get::<Option<String>, _>(index) {
-                if s.starts_with("0000-00-00") {
-                    return ForgeUniversalValue::ZeroDateTime;
-                }
-            } else {
-                // if everything else fails, its usually zero-date
-                return ForgeUniversalValue::ZeroDateTime;
-            }
+        if raw_value.is_null() {
+            return Ok(ForgeUniversalValue::Null);
         }
 
-        ForgeUniversalValue::Null
+        // sqlx could not decode it into NaiveDateTime
+        // we check for MySQL "0000-00-00" pattern as String-Fallback.
+        if let Ok(s) = row.try_get::<String, _>(index) {
+            if s.starts_with("0000-00-00") {
+                return Ok(ForgeUniversalValue::ZeroDateTime);
+            }
+            // valid string, but no Zero-Date,
+            // we save it as string
+            return Ok(ForgeUniversalValue::Text(s));
+        }
+
+        // if everythin else fails, mayb binary trash in columns, we return it as decoding-error
+        Err(sqlx::Error::Decode(
+            "Invalid DateTime/Timestamp or corrupted Zero-Date".into(),
+        ))
     }
 
-
     /// maps a MySQL-row into intermediate and DB-neutral ForgeUniversalValue-Structure
-    fn map_row_to_universal_values(&self, row: &MySqlRow) -> Vec<ForgeUniversalValue> {
+    pub fn map_row_to_universal_values(
+        &self,
+        row: &MySqlRow,
+    ) -> Result<Vec<ForgeUniversalValue>, ForgeError> {
         row.columns()
             .iter()
             .map(|col| {
                 let i = col.ordinal();
-
                 let type_name = col.type_info().name().to_uppercase();
+                let col_name = col.name();
 
-                match type_name.as_str() {
-                    "DATETIME" | "TIMESTAMP" => self.handle_datetime(row, i),
+                // local error adapter
+                let to_err = |e| ForgeError::ColumnDecode {
+                    column: col_name.to_string(),
+                    type_info: type_name.to_string(),
+                    source: e,
+                };
 
-                    "DATE" => row
-                        .try_get::<Option<chrono::NaiveDate>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(ForgeUniversalValue::Date)
-                        .unwrap_or(ForgeUniversalValue::Null),
+                // clean NULL check beforehand
+                if row.try_get_raw(i).map(|v| v.is_null()).unwrap_or(true) {
+                    return Ok(ForgeUniversalValue::Null);
+                }
 
-                    "TIME" => row
-                        .try_get::<Option<chrono::NaiveTime>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(ForgeUniversalValue::Time)
-                        .unwrap_or(ForgeUniversalValue::Null),
+                let val = match type_name.as_str() {
+                    "DATETIME" | "TIMESTAMP" => {
+                        self.handle_datetime(row, i).map_err(to_err)?
+                    }
 
-                    "YEAR" => row
-                        .try_get::<Option<i32>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(ForgeUniversalValue::Year)
-                        .unwrap_or(ForgeUniversalValue::Null),
+                    "DATE" => ForgeUniversalValue::Date(
+                        row.try_get::<chrono::NaiveDate, _>(i).map_err(to_err)?,
+                    ),
 
-                    "TINYINT(1)" | "BOOLEAN" | "BOOL" => row
-                        .try_get::<Option<bool>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(ForgeUniversalValue::Boolean)
-                        .unwrap_or(ForgeUniversalValue::Null),
+                    "TIME" => ForgeUniversalValue::Time(
+                        row.try_get::<chrono::NaiveTime, _>(i).map_err(to_err)?,
+                    ),
+
+                    "YEAR" => ForgeUniversalValue::Year(row.try_get::<i32, _>(i).map_err(to_err)?),
+
+                    "TINYINT(1)" | "BOOLEAN" | "BOOL" => {
+                        ForgeUniversalValue::Boolean(row.try_get::<bool, _>(i).map_err(to_err)?)
+                    }
 
                     "TINYINT" | "SMALLINT" | "INT" | "INTEGER" | "MEDIUMINT" | "BIGINT"
                     | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "INT UNSIGNED"
                     | "BIGINT UNSIGNED" => {
-                        let is_unsigned =
-                            col.type_info().name().to_uppercase().contains("UNSIGNED");
+                        let is_unsigned = type_name.contains("UNSIGNED");
 
                         if is_unsigned {
-                            row.try_get::<Option<u64>, _>(i)
-                                .ok()
-                                .flatten()
-                                .map(ForgeUniversalValue::UnsignedInteger)
-                                .unwrap_or(ForgeUniversalValue::Null)
+                            ForgeUniversalValue::UnsignedInteger(
+                                row.try_get::<u64, _>(i).map_err(to_err)?,
+                            )
                         } else {
-                            row.try_get::<Option<i64>, _>(i)
-                                .ok()
-                                .flatten()
-                                .map(ForgeUniversalValue::Integer)
-                                .unwrap_or(ForgeUniversalValue::Null)
+                            ForgeUniversalValue::Integer(row.try_get::<i64, _>(i).map_err(to_err)?)
                         }
                     }
 
-                    "JSON" => row
-                        .try_get::<Option<serde_json::Value>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(ForgeUniversalValue::Json)
-                        .unwrap_or(ForgeUniversalValue::Null),
+                    "JSON" => ForgeUniversalValue::Json(
+                        row.try_get::<serde_json::Value, _>(i).map_err(to_err)?,
+                    ),
 
-                    "DOUBLE" | "FLOAT" => row
-                        .try_get::<Option<f64>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(ForgeUniversalValue::Float)
-                        .unwrap_or(ForgeUniversalValue::Null),
+                    "DOUBLE" | "FLOAT" => {
+                        ForgeUniversalValue::Float(row.try_get::<f64, _>(i).map_err(to_err)?)
+                    }
 
-                    "DECIMAL" => row
-                        .try_get::<Option<rust_decimal::Decimal>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(ForgeUniversalValue::Decimal)
-                        .unwrap_or(ForgeUniversalValue::Null),
-                    "BLOB" | "VARBINARY" | "BINARY" => row
-                        .try_get::<Option<Vec<u8>>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(ForgeUniversalValue::Binary)
-                        .unwrap_or(ForgeUniversalValue::Null),
+                    "DECIMAL" => ForgeUniversalValue::Decimal(
+                        row.try_get::<rust_decimal::Decimal, _>(i).map_err(to_err)?,
+                    ),
 
-                    // fallback for everything else like VARCHAR, TEXT, ENUM, etc.
+                    "BLOB" | "VARBINARY" | "BINARY" => {
+                        ForgeUniversalValue::Binary(row.try_get::<Vec<u8>, _>(i).map_err(to_err)?)
+                    }
+
+                    // String-Fallback for VARCHAR, TEXT etc.
+                    "VARCHAR" | "TEXT" | "ENUM" | "SET" => {
+                        ForgeUniversalValue::Text(row.try_get::<String, _>(i).map_err(to_err)?)
+                    }
+
+                    // Catch-All with error reporting for completely unknown types
                     _ => {
-                        if let Ok(Some(s)) = row.try_get::<Option<String>, _>(i) {
-                            ForgeUniversalValue::Text(s)
-                        } else if let Some(s) = self.get_string_at_index(row, i) {
-                            ForgeUniversalValue::Text(s)
-                        } else if let Ok(Some(bin)) = row.try_get::<Option<Vec<u8>>, _>(i) {
-                            ForgeUniversalValue::Binary(bin)
-                        } else {
-                            ForgeUniversalValue::Null
-                        }
+                        return Err(ForgeError::UnsupportedMySQLType {
+                            column: col_name.to_string(),
+                            type_info: type_name.to_string(),
+                        });
                     }
-                }
+                };
+
+                Ok(val)
             })
-            .collect()
+            .collect() // Sammelt Result<Vec<ForgeUniversalValue>, ForgeError>
     }
 }
 
@@ -922,7 +912,7 @@ impl DatabaseDriver for MySqlDriver {
     ) -> Result<
         Pin<
             Box<
-                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>>
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
                     + Send
                     + '_,
             >,
@@ -936,7 +926,7 @@ impl DatabaseDriver for MySqlDriver {
 
             while let Some(row) = rows.next().await {
                 let row: sqlx::mysql::MySqlRow = row?;
-                let values = self.map_row_to_universal_values(&row);
+                let values = self.map_row_to_universal_values(&row)?;
 
                 let mut row_map = IndexMap::new();
                 for (col, val) in row.columns().iter().zip(values) {
@@ -1041,7 +1031,10 @@ impl DatabaseDriver for MySqlDriver {
         Ok(())
     }
 
-    async fn get_table_row_count(&self, table_name: &str) -> Result<u64, Box<dyn std::error::Error>> {
+    async fn get_table_row_count(
+        &self,
+        table_name: &str,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
         let query = format!("SELECT COUNT(*) FROM `{}`", table_name);
         let row: (i64,) = sqlx::query_as(&query).fetch_one(&self.pool).await?;
         Ok(row.0 as u64)

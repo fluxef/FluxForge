@@ -1,8 +1,9 @@
-
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use rust_decimal::Decimal;
+use thiserror::Error;
+
 // config structures for mapping.toml
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -189,4 +190,31 @@ pub enum ForgeUniversalValue {
     Inet(sqlx::types::ipnetwork::IpNetwork),
     Null,
     ZeroDateTime,
+}
+
+#[derive(Error, Debug)]
+pub enum ForgeError {
+    /// Standard database error coming from sqlx
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error), // convert sqlx::Error automatic via '?'
+
+    /// A type in Postgres is not yet supported in match-code
+    #[error("PostgreSQL-Error in Columns '{column}': Type '{type_info}' is not supported yet.")]
+    UnsupportedPostgresType { column: String, type_info: String },
+
+    /// A type in MySQL is not yet supported in match-code
+    #[error("MySQL-Error in Columns '{column}': Type '{type_info}' is not yet supported.")]
+    UnsupportedMySQLType { column: String, type_info: String },
+
+    /// The type is known but the data in that row can not be decoded. maybe data corruption?
+    #[error("Error decoding Columns '{column}' (Typ: {type_info}): {source}")]
+    ColumnDecode {
+        column: String,
+        type_info: String,
+        source: sqlx::Error,
+    },
+
+    /// General internal error that should not happen and that does not have anything to do with the database
+    #[error("General Internal Error: {0}")]
+    Internal(String),
 }

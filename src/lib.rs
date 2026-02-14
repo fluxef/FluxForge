@@ -5,7 +5,7 @@ pub mod ops;
 
 // Re-export for easier access
 pub use crate::core::{ForgeColumn, ForgeSchema, ForgeTable};
-use crate::core::{ForgeConfig, ForgeUniversalValue};
+use crate::core::{ForgeConfig, ForgeError, ForgeUniversalValue};
 use async_trait::async_trait;
 use futures::Stream;
 use indexmap::IndexMap;
@@ -40,7 +40,7 @@ pub trait DatabaseDriver: Send + Sync {
     ) -> Result<
         Pin<
             Box<
-                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, sqlx::Error>>
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
                     + Send
                     + '_,
             >,

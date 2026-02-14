@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc, NaiveDateTime};
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use sqlx::{
@@ -8,7 +8,6 @@ use sqlx::{
 };
 use std::collections::HashMap;
 use std::error::Error;
-
 use std::pin::Pin;
 
 use crate::core::{
@@ -648,17 +647,24 @@ impl MySqlDriver {
     /// special handling for empty mysql date and datetime values that start with 0000-00-00 
     /// postgres does not understand those "0000-00-00" values
     pub fn handle_datetime(&self, row: &MySqlRow, index: usize) -> ForgeUniversalValue {
+        // 1st try with  NaiveDateTime (for DATETIME columns)
         match row.try_get::<Option<NaiveDateTime>, _>(index) {
-            Ok(Some(dt)) => ForgeUniversalValue::DateTime(dt),
-            Ok(None) => ForgeUniversalValue::Null,
+            Ok(Some(dt)) => return ForgeUniversalValue::DateTime(dt),
+            Ok(None) => return ForgeUniversalValue::Null,
             Err(_) => {
-                // Check MySQL "Zero-Date"
-                let raw: Option<String> = row.try_get(index).ok();
-                match raw {
-                    Some(s) if s.starts_with("0000-00-00") => ForgeUniversalValue::Null,
-                    _ => ForgeUniversalValue::Null,
+                // 2nd try as DateTime<Utc> (for TIMESTAMP columns)
+                // Das löst den "mismatched types" Fehler für Index 36
+                if let Ok(Some(dt_utc)) = row.try_get::<Option<DateTime<Utc>>, _>(index) {
+                    return ForgeUniversalValue::DateTime(dt_utc.naive_utc());
                 }
             }
+        }
+
+        // fallback for Zero-Dates real errors
+        let raw: Option<String> = row.try_get(index).ok();
+        match raw {
+            Some(s) if s.starts_with("0000-00-00") => ForgeUniversalValue::Null,
+            _ => ForgeUniversalValue::Null,
         }
     }
 

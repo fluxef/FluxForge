@@ -185,6 +185,8 @@ pub enum ForgeUniversalValue {
     DateTime(NaiveDateTime),
     Decimal(Decimal),
     Json(serde_json::Value),
+    Uuid(sqlx::types::Uuid),
+    Inet(sqlx::types::ipnetwork::IpNetwork),
     Null,
     ZeroDateTime,
 }

@@ -23,7 +23,7 @@ pub async fn create_driver(url: &str, config:&ForgeConfig) -> Result<Box<dyn Dat
         Ok(Box::new(mysql::MySqlDriver { pool, zero_date_on_write }))
     } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
         let pool = PgPool::connect(url).await?;
-        Ok(Box::new(postgres::PostgresDriver { pool }))
+        Ok(Box::new(postgres::PostgresDriver { pool: Some(pool) }))
     } else {
         Err(format!("Unsupported database protocol in URL: {}", url).into())
     }

@@ -11,36 +11,25 @@ keywords = ["database", "mysql", "postgres", "migration", "schema"]
 categories = ["database", "command-line-utilities"]
 
 [lib]
-# Die Library-Sektion ist optional, wenn die Datei src/lib.rs heißt.
-# Sie erlaubt es anderen, fluxforge als Abhängigkeit zu nutzen.
+# so other can use "fluxforge" as dependency / crate
 name = "fluxforge"
 path = "src/lib.rs"
 
 [[bin]]
-# Das Binary wird beim Aufruf von 'cargo install fluxforge' installiert.
+# so the binary "fluxforge" is installed with 'cargo install fluxforge'
 name = "fluxforge"
 path = "src/main.rs"
 
 [dependencies]
-# CLI Parsing
 clap = { version = "4.5", features = ["derive"] }
-
-# Async Runtime
 tokio = { version = "1.49", features = ["full"] }
-
-# Serialisierung für das interne JSON-Format
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Datenbank-Treiber (Beispiele)
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "postgres", "chrono", "rust_decimal"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "postgres", "chrono", "rust_decimal", "uuid", "ipnetwork"] }
 rust_decimal = "1.40"
-# num-traits = "0.2"
-
-# Konfiguration (TOML für mapping.toml)
+uuid = { version = "1.0", features = ["v4", "serde"] }
+ipnetwork = "0.20"
 toml = "0.8"
-
-# Logging
 log = "0.4"
 env_logger = "0.10"
 async-trait = "0.1.89"

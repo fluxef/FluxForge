@@ -27,10 +27,18 @@ zero_date = true
 
 # --- Postgres Sektion ---
 [postgres.types.on_read]
-"serial" = "int"
-"timestamptz" = "datetimetz"
+"uuid" = "uuid"
+"inet" = "inet"
+"cidr" = "inet"
+"json" = "json"
+"jsonb" = "json"
 
 [postgres.types.on_write]
-"int" = "serial"
-"datetimetz" = "timestamptz"
+"uuid" = "uuid"
+"inet" = "inet"
+"json" = "jsonb"
+
+[postgres.rules.on_read]
+
+[postgres.rules.on_write]
 

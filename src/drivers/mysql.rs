@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use sqlx::{mysql::{MySqlPool, MySqlRow}, Column, Row, TypeInfo, ValueRef};
@@ -13,6 +13,7 @@ use crate::core::{
 };
 use crate::ops::log_error_to_file;
 use crate::{DatabaseDriver, ForgeColumn};
+
 
 pub struct MySqlDriver {
     pub pool: MySqlPool,
@@ -41,6 +42,8 @@ impl MySqlDriver {
             ForgeUniversalValue::DateTime(dt) => query.bind(dt),
             ForgeUniversalValue::Decimal(d) => query.bind(d),
             ForgeUniversalValue::Json(j) => query.bind(j),
+            ForgeUniversalValue::Uuid(u) => query.bind(u.to_string()),
+            ForgeUniversalValue::Inet(i) => query.bind(i.to_string()),
             ForgeUniversalValue::Null => query.bind(None::<String>),
             ForgeUniversalValue::ZeroDateTime => {
                 if self.zero_date_on_write {
@@ -653,7 +656,6 @@ impl MySqlDriver {
     /// special handling for empty mysql date and datetime values that start with 0000-00-00
     /// postgres does not understand those "0000-00-00" values
     pub fn handle_datetime(&self, row: &MySqlRow, index: usize) -> ForgeUniversalValue {
-        use sqlx::{Column, TypeInfo, Decode, mysql::MySql};
 
         // 1. try Type based reading
         let column = &row.columns()[index];

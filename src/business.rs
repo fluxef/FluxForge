@@ -17,7 +17,7 @@ pub async fn handle_command(
             // load config, uses internal defaults if not file set
             let forge_config = load_config(config.clone())?;
 
-            let source_driver = drivers::create_driver(&source).await?;
+            let source_driver = drivers::create_driver(&source,&forge_config).await?;
 
             let mut extracted_schema = source_driver.fetch_schema(&forge_config).await?;
             extracted_schema.metadata.config_file = get_config_file_path(config.clone());
@@ -73,7 +73,7 @@ pub async fn handle_command(
                 let src_url = source
                     .as_ref()
                     .ok_or("Source URL is required.")?;
-                let s_driver = drivers::create_driver(src_url).await?;
+                let s_driver = drivers::create_driver(src_url,&forge_config).await?;
                 let int_schema = s_driver.fetch_schema(&forge_config).await?;
                 source_driver = Some(s_driver);
 
@@ -85,7 +85,7 @@ pub async fn handle_command(
                 .map(|sorted| schema.tables = sorted)
                 .map_err(|e| format!("Circular Dependency Error: {}", e))?;
 
-            let target_driver = drivers::create_driver(&target).await?;
+            let target_driver = drivers::create_driver(&target,&forge_config).await?;
 
             // apply schema diff to target
             let statements = target_driver
@@ -117,7 +117,7 @@ pub async fn handle_command(
             let forge_config = load_config(config.clone())?;
 
             // target database
-            let target_driver = drivers::create_driver(&target).await?;
+            let target_driver = drivers::create_driver(&target,&forge_config).await?;
 
             if !target_driver.db_is_empty().await? {
                 return Err("ERROR: Target is not empty!  \
@@ -125,7 +125,7 @@ pub async fn handle_command(
             }
 
             // source database
-            let source_driver = drivers::create_driver(&source).await?;
+            let source_driver = drivers::create_driver(&source,&forge_config).await?;
             let mut source_schema = source_driver.fetch_schema(&forge_config).await?;
 
             // sort tables (will become more important when foreign keys are implemented)

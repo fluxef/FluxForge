@@ -10,9 +10,6 @@ default_charset = "utf8mb4"
 "integer" = "int"
 "timestamp" = "datetimetz"
 
-[mysql.rules.on_read]
-unsigned_int_to_bigint = true
-
 [mysql.types.on_write]
 # from internal representation (usually postgres) to MySQL-Typ
 "integer" = "int"
@@ -20,6 +17,13 @@ unsigned_int_to_bigint = true
 "biginteger" = "bigint"
 "text" = "longtext"
 "blob" = "longblob"
+
+[mysql.rules.on_read]
+unsigned_int_to_bigint = true
+
+[mysql.rules.on_write]
+zero_date = true
+
 
 # --- Postgres Sektion ---
 [postgres.types.on_read]

@@ -1,11 +1,8 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc, NaiveDateTime};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
-use sqlx::{
-    mysql::{MySqlPool, MySqlRow}, Column, Row,
-    TypeInfo,
-};
+use sqlx::{mysql::{MySqlPool, MySqlRow}, Column, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
 use std::error::Error;
 use std::pin::Pin;
@@ -19,6 +16,7 @@ use crate::{DatabaseDriver, ForgeColumn};
 
 pub struct MySqlDriver {
     pub pool: MySqlPool,
+    pub zero_date_on_write: bool,
 }
 
 impl MySqlDriver {
@@ -29,6 +27,7 @@ impl MySqlDriver {
         query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
         val: &'q ForgeUniversalValue,
     ) -> sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments> {
+
         match val {
             ForgeUniversalValue::Integer(i) => query.bind(i),
             ForgeUniversalValue::UnsignedInteger(u) => query.bind(u),
@@ -43,6 +42,13 @@ impl MySqlDriver {
             ForgeUniversalValue::Decimal(d) => query.bind(d),
             ForgeUniversalValue::Json(j) => query.bind(j),
             ForgeUniversalValue::Null => query.bind(None::<String>),
+            ForgeUniversalValue::ZeroDateTime => {
+                if self.zero_date_on_write {
+                    query.bind("0000-00-00 00:00:00")
+                } else {
+                    query.bind(None::<String>)
+                }
+            }
         }
     }
 
@@ -644,29 +650,49 @@ impl MySqlDriver {
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    /// special handling for empty mysql date and datetime values that start with 0000-00-00 
+    /// special handling for empty mysql date and datetime values that start with 0000-00-00
     /// postgres does not understand those "0000-00-00" values
     pub fn handle_datetime(&self, row: &MySqlRow, index: usize) -> ForgeUniversalValue {
-        // 1st try with  NaiveDateTime (for DATETIME columns)
-        match row.try_get::<Option<NaiveDateTime>, _>(index) {
-            Ok(Some(dt)) => return ForgeUniversalValue::DateTime(dt),
-            Ok(None) => return ForgeUniversalValue::Null,
-            Err(_) => {
-                // 2nd try as DateTime<Utc> (for TIMESTAMP columns)
-                // Das löst den "mismatched types" Fehler für Index 36
-                if let Ok(Some(dt_utc)) = row.try_get::<Option<DateTime<Utc>>, _>(index) {
-                    return ForgeUniversalValue::DateTime(dt_utc.naive_utc());
-                }
+        use sqlx::{Column, TypeInfo, Decode, mysql::MySql};
+
+        // 1. try Type based reading
+        let column = &row.columns()[index];
+        let type_name = column.type_info().name();
+
+        if type_name == "TIMESTAMP" {
+            if let Ok(Some(dt_utc)) = row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(index) {
+                return ForgeUniversalValue::DateTime(dt_utc.naive_utc());
+            }
+        } else {
+            if let Ok(Some(dt)) = row.try_get::<Option<NaiveDateTime>, _>(index) {
+                return ForgeUniversalValue::DateTime(dt);
             }
         }
 
-        // fallback for Zero-Dates real errors
-        let raw: Option<String> = row.try_get(index).ok();
-        match raw {
-            Some(s) if s.starts_with("0000-00-00") => ForgeUniversalValue::Null,
-            _ => ForgeUniversalValue::Null,
+        // 2. we read the raw data binaries
+        // a MySQL Zero-Date in binary protocol is  0-Bytes (length 0 or only zeros).
+        let raw_value = row.try_get_raw(index).ok();
+
+        if let Some(raw) = raw_value {
+            if raw.is_null() {
+                return ForgeUniversalValue::ZeroDateTime;
+            }
+
+            // sqlx colud not convernt the value to wandeln.
+            // we check zero-date, string-fallback is our last try
+            if let Ok(Some(s)) = row.try_get::<Option<String>, _>(index) {
+                if s.starts_with("0000-00-00") {
+                    return ForgeUniversalValue::ZeroDateTime;
+                }
+            } else {
+                // if everything else fails, its usually zero-date
+                return ForgeUniversalValue::ZeroDateTime;
+            }
         }
+
+        ForgeUniversalValue::Null
     }
+
 
     /// maps a MySQL-row into intermediate and DB-neutral ForgeUniversalValue-Structure
     fn map_row_to_universal_values(&self, row: &MySqlRow) -> Vec<ForgeUniversalValue> {

@@ -13,7 +13,7 @@ fn mk_driver() -> MySqlDriver {
     // Use a lazy pool that will not connect unless used.
     let opts = MySqlConnectOptions::from_str("mysql://user:pass@localhost:3306/testdb").unwrap();
     let pool = MySqlPoolOptions::new().connect_lazy_with(opts);
-    MySqlDriver { pool }
+    MySqlDriver { pool, zero_date_on_write: true }
 }
 
 fn mk_config() -> ForgeConfig {

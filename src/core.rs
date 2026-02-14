@@ -65,7 +65,7 @@ pub struct ForgeRulesDirectionConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ForgeRuleGeneralConfig {
     pub unsigned_int_to_bigint: Option<bool>,
-    pub nullify_invalid_dates: Option<bool>,
+    pub zero_date: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -186,4 +186,5 @@ pub enum ForgeUniversalValue {
     Decimal(Decimal),
     Json(serde_json::Value),
     Null,
+    ZeroDateTime,
 }

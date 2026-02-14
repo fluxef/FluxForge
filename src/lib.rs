@@ -56,4 +56,7 @@ pub trait DatabaseDriver: Send + Sync {
         halt_on_error: bool,
         chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// gets row count for a table
+    async fn get_table_row_count(&self, table_name: &str) -> Result<u64, Box<dyn std::error::Error>>;
 }

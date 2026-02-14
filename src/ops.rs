@@ -28,7 +28,8 @@ pub async fn replicate_data(
     // }
 
     for table in &schema.tables {
-        let pb = multi.add(ProgressBar::new_spinner());
+        let row_count = source.get_table_row_count(&table.name).await.unwrap_or(0);
+        let pb = multi.add(ProgressBar::new(row_count));
         pb.set_style(style.clone());
         pb.set_message(format!("Forging table: {}", table.name));
 
@@ -46,9 +47,7 @@ pub async fn replicate_data(
                     .insert_chunk(&table.name, dry_run, halt_on_error, chunk)
                     .await?;
                 chunk = Vec::with_capacity(1000);
-                if !dry_run {
-                    pb.set_position(total_rows);
-                }
+                pb.set_position(total_rows);
             }
         }
 
@@ -57,9 +56,7 @@ pub async fn replicate_data(
             target
                 .insert_chunk(&table.name, dry_run, halt_on_error, chunk)
                 .await?;
-            if !dry_run {
-                pb.set_position(total_rows);
-            }
+            pb.set_position(total_rows);
         }
 
         pb.finish_with_message(format!("Done: {} ({} rows)", table.name, total_rows));

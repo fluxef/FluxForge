@@ -1038,4 +1038,10 @@ impl DatabaseDriver for MySqlDriver {
 
         Ok(())
     }
+
+    async fn get_table_row_count(&self, table_name: &str) -> Result<u64, Box<dyn std::error::Error>> {
+        let query = format!("SELECT COUNT(*) FROM `{}`", table_name);
+        let row: (i64,) = sqlx::query_as(&query).fetch_one(&self.pool).await?;
+        Ok(row.0 as u64)
+    }
 }

@@ -61,4 +61,8 @@ impl DatabaseDriver for PostgresDriver {
     ) -> Result<(), Box<dyn Error>> {
         todo!()
     }
+
+    async fn get_table_row_count(&self, _table_name: &str) -> Result<u64, Box<dyn std::error::Error>> {
+        todo!()
+    }
 }

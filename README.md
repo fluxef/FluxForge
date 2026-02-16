@@ -57,5 +57,3 @@ Oprtional:
 * `--dry-run` ensures that no migration takes place; instead, only the SQL statements are output.
 
 
-
-Stay tuned for more!

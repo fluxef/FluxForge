@@ -1,3 +1,6 @@
+# only useful if source AND target are mysql
+# this is the default mapping if "--config" is not used
+
 # --- MySQL Sektion ---
 [mysql.general]
 # default behaviour for unknown types
@@ -7,16 +10,28 @@ default_charset = "utf8mb4"
 
 [mysql.types.on_read]
 # from mysql to internal representation (usually postgres)
-"integer" = "int"
+"int" = "integer"
 "timestamp" = "datetimetz"
-
-[mysql.types.on_write]
-# from internal representation (usually postgres) to MySQL-Typ
-"integer" = "int"
-"datetimetz" = "timestamp"
+"tinyint" = "smallint"
+"mediumint" = "integer"
+"double" = "double precision"
+"tinytext" = "text"
+"mediumtext" = "text"
+"longtext" = "text"
+"tinyblob" = "bytea"
+"mediumblob" = "bytea"
+"longblob" = "bytea"
+"blob" = "bytea"
+"binary" = "bytea"
+"varbinary" = "bytea"
+"datetime" = "timestamp"
+"datetimetz" = "timestamptz"
+"year" = "smallint"
+"bit" = "bytea"
+"enum" = "varchar"
+"set" = "varchar"
+"char" = "varchar"
 "biginteger" = "bigint"
-"text" = "longtext"
-"blob" = "longblob"
 
 [mysql.rules.on_read]
 unsigned_int_to_bigint = true
@@ -24,21 +39,19 @@ unsigned_int_to_bigint = true
 [mysql.rules.on_write]
 zero_date = true
 
-
 # --- Postgres Sektion ---
 [postgres.types.on_read]
-"uuid" = "uuid"
-"inet" = "inet"
 "cidr" = "inet"
 "json" = "json"
 "jsonb" = "json"
 
 [postgres.types.on_write]
-"uuid" = "uuid"
-"inet" = "inet"
 "json" = "jsonb"
+"datetimetz" = "timestamptz"
 
 [postgres.rules.on_read]
 
 [postgres.rules.on_write]
+
+# the end :-)
 

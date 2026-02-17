@@ -891,9 +891,8 @@ impl MySqlDriver {
                         ForgeUniversalValue::Binary(row.try_get::<Vec<u8>, _>(i).map_err(to_err)?)
                     }
                     "BIT" => {
-                        ForgeUniversalValue::UnsignedInteger(
-                            row.try_get::<u64, _>(i).map_err(to_err)?,
-                        )
+                        let v = row.try_get::<u64, _>(i).map_err(to_err)?;
+                        ForgeUniversalValue::Binary(v.to_be_bytes().to_vec())
                     }
 
                     // String-Fallback for VARCHAR, TEXT etc.

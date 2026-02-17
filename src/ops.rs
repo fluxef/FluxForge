@@ -78,8 +78,12 @@ async fn verify_table_data(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let order_by = order_by_columns(table);
     let column_names: Vec<String> = table.columns.iter().map(|col| col.name.clone()).collect();
-    let row_count = target.get_table_row_count(&table.name).await.unwrap_or(0);
-    let pb = multi.add(ProgressBar::new(row_count));
+
+    let src_count = source.get_table_row_count(&table.name).await.unwrap_or(0);
+    let tgt_count = target.get_table_row_count(&table.name).await.unwrap_or(0);
+    println!("Verifying '{}' | order_by={:?} | src_count={} | tgt_count={}", table.name, order_by, src_count, tgt_count);
+
+    let pb = multi.add(ProgressBar::new(tgt_count));
     pb.set_style(style.clone());
     pb.set_message(format!("Verifying table: {}", table.name));
 

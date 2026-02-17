@@ -63,7 +63,7 @@ zero_date = true
             .expect("Error parsing mysql mysql config");
 
         let source_url = env::var("MYSQL_URL_REFERENCE")
-            .expect("MYSQL_URL_REFERENCE fehlt");
+            .expect("MYSQL_URL_REFERENCE is missing");
         let target_url = format!("{}/{}", ctx.mysql_admin_url, ctx.db_name);
 
         println!("test test_mysql_to_mysql_replicate_with_verify() ");

@@ -25,20 +25,20 @@ path = "src/main.rs"
 integration-tests = []
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5.59", features = ["derive"] }
 tokio = { version = "1.49", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "postgres", "chrono", "rust_decimal", "uuid", "ipnetwork"] }
 rust_decimal = "1.40"
-uuid = { version = "1.0", features = ["v4", "serde"] }
+uuid = { version = "1.21", features = ["v4", "serde"] }
 ipnetwork = "0.20"
 toml = "0.8"
 async-trait = "0.1.89"
-futures = "0.3.31"
+futures = "0.3.32"
 chrono = "0.4.43"
-petgraph = "0.6"
-indicatif = "0.17"
+petgraph = "0.8"
+indicatif = "0.18"
 indexmap = "2.13.0"
 async-stream = "0.3.6"
 thiserror = "2.0"

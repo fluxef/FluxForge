@@ -24,7 +24,7 @@ pub enum Commands {
         config: Option<PathBuf>,
         
         /// Verbose output
-        #[arg(long, short = 'v')]
+        #[arg(long)]
         verbose: bool,
         
     },
@@ -55,7 +55,7 @@ pub enum Commands {
         dry_run: bool,
 
         /// Verbose output
-        #[arg(long, short = 'v')]
+        #[arg(long)]
         verbose: bool,
 
         #[arg(long)]
@@ -79,7 +79,7 @@ pub enum Commands {
         dry_run: bool,
         
         /// Verbose output
-        #[arg(long, short = 'v')]
+        #[arg(long)]
         verbose: bool,
         
         // stop data transfer if sql error writing sql data

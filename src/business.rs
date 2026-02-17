@@ -114,6 +114,42 @@ pub async fn handle_command(
             halt_on_error,
             verify,
         } => {
+            // Validation of source and target database combinations
+            let source_type = if source.starts_with("mysql://") {
+                "mysql"
+            } else if source.starts_with("postgres://") || source.starts_with("postgresql://") {
+                "postgres"
+            } else {
+                "unknown"
+            };
+
+            let target_type = if target.starts_with("mysql://") {
+                "mysql"
+            } else if target.starts_with("postgres://") || target.starts_with("postgresql://") {
+                "postgres"
+            } else {
+                "unknown"
+            };
+
+            let allowed = match (source_type, target_type) {
+                ("mysql", "postgres") => true,
+                ("mysql", "mysql") => true,
+                ("postgres", "postgres") => true,
+                ("postgres", "mysql") => false,
+                _ => false,
+            };
+
+            if !allowed {
+                let msg = format!(
+                    "ERROR: Combination {} -> {} is not allowed.\n\
+                     Allowed combinations are:\n\
+                     - mysql -> postgres\n\
+                     - mysql -> mysql\n\
+                     - postgres -> postgres",
+                    source_type, target_type
+                );
+                return Err(msg.into());
+            }
 
             let forge_config = load_config(config.clone())?;
             let verify_enabled = verify

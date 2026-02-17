@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 #[cfg(feature = "integration-tests")]
 mod common;
 
@@ -6,7 +8,7 @@ mod tests {
     use crate::common::TestContext;
     use fluxforge::core::ForgeConfig;
     use fluxforge::{drivers, ops};
-    use sqlx::Row;
+
     use std::env;
 
     /// test if mysql-test-infrastucture is working
@@ -18,8 +20,8 @@ mod tests {
         let target_url = format!("{}/{}", ctx.mysql_admin_url, ctx.db_name);
 
         println!("test test_mysql_to_mysql_connection()");
-        println!("MySQL Source URL: {}", source_url);
-        println!("MySQL Target URL: {}", target_url);
+        println!("MySQL Source URL: {source_url}");
+        println!("MySQL Target URL: {target_url}");
         println!(" ");
 
         // check Reference-DB from init-mysql.sql)
@@ -52,11 +54,11 @@ mod tests {
     async fn test_mysql_to_mysql_replicate_with_verify() {
         let ctx = TestContext::setup().await;
 
-        let config_toml = r#"
+        let config_toml = r"
 # standard-file without mapping
 [mysql.rules.on_write]
 zero_date = true
-"#;
+";
 
         let forge_config: ForgeConfig =
             toml::from_str(config_toml).expect("Error parsing mysql mysql config");
@@ -65,8 +67,8 @@ zero_date = true
         let target_url = format!("{}/{}", ctx.mysql_admin_url, ctx.db_name);
 
         println!("test test_mysql_to_mysql_replicate_with_verify() ");
-        println!("MySQL Source URL: {}", source_url);
-        println!("MySQL Target URL: {}", target_url);
+        println!("MySQL Source URL: {source_url}");
+        println!("MySQL Target URL: {target_url}");
 
         let source_driver = drivers::create_driver(&source_url, &forge_config)
             .await

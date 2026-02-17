@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 #[cfg(feature = "integration-tests")]
 mod common;
 
@@ -6,7 +8,7 @@ mod tests {
     use crate::common::TestContext;
     use fluxforge::core::ForgeConfig;
     use fluxforge::{drivers, ops};
-    use sqlx::Row;
+
     use std::env;
 
     #[tokio::test]
@@ -19,8 +21,8 @@ mod tests {
         let target_url = format!("{}/{}", ctx.pg_admin_url, ctx.db_name);
 
         println!("test test_mysql_to_postgres_connectiony() ");
-        println!("Mysql Source URL: {}", source_url);
-        println!("Postgres Target URL: {}", target_url);
+        println!("Mysql Source URL: {source_url}");
+        println!("Postgres Target URL: {target_url}");
 
         // check Reference-DB from init-mysql.sql)
         let source_row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM bla")
@@ -115,8 +117,8 @@ zero_date = true
         let target_url = format!("{}/{}", ctx.pg_admin_url, ctx.db_name);
 
         println!("test test_mysql_to_postgres_replication_with_verify() ");
-        println!("Mysql Source URL: {}", source_url);
-        println!("Postgres Target URL: {}", target_url);
+        println!("Mysql Source URL: {source_url}");
+        println!("Postgres Target URL: {target_url}");
 
         let source_driver = drivers::create_driver(&source_url, &forge_config)
             .await

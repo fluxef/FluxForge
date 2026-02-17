@@ -15,6 +15,7 @@ pub fn load_config(user_path: Option<std::path::PathBuf>) -> Result<ForgeConfig,
     Ok(config)
 }
 
+#[must_use] 
 pub fn get_config_file_path(user_path: Option<std::path::PathBuf>) -> String {
     match user_path {
         Some(path) => path.to_string_lossy().to_string(),

@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::field_reassign_with_default
+)]
+
 use fluxforge::core::{
     ForgeColumn, ForgeConfig, ForgeDbConfig, ForgeIndex, ForgeRuleGeneralConfig,
     ForgeRulesDirectionConfig, ForgeTable, ForgeTypeDirectionConfig,
@@ -34,7 +41,7 @@ fn col(name: &str, data_type: &str) -> ForgeColumn {
 fn idx(name: &str, cols: &[&str], unique: bool) -> ForgeIndex {
     ForgeIndex {
         name: name.to_string(),
-        columns: cols.iter().map(|s| s.to_string()).collect(),
+        columns: cols.iter().map(std::string::ToString::to_string).collect(),
         is_unique: unique,
         index_type: None,
         column_prefixes: None,
@@ -233,11 +240,11 @@ async fn test_field_migration_sql_comprehensive_coverage() {
         let mut c = col("col", dtype);
         c.precision = prec;
         c.scale = scale;
-        c.default = def.map(|s| s.to_string());
+        c.default = def.map(std::string::ToString::to_string);
         c.is_nullable = true; // explicitly test NULL variant with default
 
         let sql = drv.field_migration_sql(c.clone(), &config);
-        assert_eq!(sql, expected, "Failed for {} with default {:?}", dtype, def);
+        assert_eq!(sql, expected, "Failed for {dtype} with default {def:?}");
     }
 
     // Test varchar/char length variations
@@ -356,16 +363,12 @@ async fn test_field_migration_sql_unsigned_matrix() {
             if *is_unsigned {
                 assert!(
                     sql.contains(" unsigned"),
-                    "Type {} with is_unsigned=true should contain 'unsigned'. SQL: {}",
-                    t,
-                    sql
+                    "Type {t} with is_unsigned=true should contain 'unsigned'. SQL: {sql}"
                 );
             } else {
                 assert!(
                     !sql.contains(" unsigned"),
-                    "Type {} with is_unsigned=false should NOT contain 'unsigned'. SQL: {}",
-                    t,
-                    sql
+                    "Type {t} with is_unsigned=false should NOT contain 'unsigned'. SQL: {sql}"
                 );
             }
         }
@@ -390,28 +393,23 @@ async fn test_build_mysql_create_table_sql_with_pk() {
     let sql = drv.build_mysql_create_table_sql(&t, &mk_config());
     assert!(
         sql.starts_with("CREATE TABLE `users` ("),
-        "build_mysql_create_table_sql failed: missing CREATE TABLE prefix. SQL: {}",
-        sql
+        "build_mysql_create_table_sql failed: missing CREATE TABLE prefix. SQL: {sql}"
     );
     assert!(
         sql.contains("`id` int NOT NULL"),
-        "build_mysql_create_table_sql failed: missing 'id' column definition. SQL: {}",
-        sql
+        "build_mysql_create_table_sql failed: missing 'id' column definition. SQL: {sql}"
     );
     assert!(
         sql.contains("`name` varchar(100) NULL DEFAULT NULL"),
-        "build_mysql_create_table_sql failed: missing 'name' column definition. SQL: {}",
-        sql
+        "build_mysql_create_table_sql failed: missing 'name' column definition. SQL: {sql}"
     );
     assert!(
         sql.contains("PRIMARY KEY (`id`)"),
-        "build_mysql_create_table_sql failed: missing PRIMARY KEY definition. SQL: {}",
-        sql
+        "build_mysql_create_table_sql failed: missing PRIMARY KEY definition. SQL: {sql}"
     );
     assert!(
-        sql.ends_with(";"),
-        "build_mysql_create_table_sql failed: missing semicolon at the end. SQL: {}",
-        sql
+        sql.ends_with(';'),
+        "build_mysql_create_table_sql failed: missing semicolon at the end. SQL: {sql}"
     );
 }
 
@@ -466,13 +464,11 @@ async fn test_modify_column_migration_float_default_comparison() {
     let sql2 = drv.modify_column_migration("t1", &c_src, &c_dst, &mk_config(), false);
     assert!(
         sql2.contains("MODIFY COLUMN `f1` float"),
-        "Numeric inequality should trigger migration. SQL: {}",
-        sql2
+        "Numeric inequality should trigger migration. SQL: {sql2}"
     );
     assert!(
         sql2.contains("DEFAULT '1.0'"),
-        "Should use src default. SQL: {}",
-        sql2
+        "Should use src default. SQL: {sql2}"
     );
 
     // Case 3: Other type (varchar) with identical string content, should not trigger
@@ -510,8 +506,7 @@ async fn test_create_and_delete_table_migration_sql_and_indices() {
     assert_eq!(
         stmts.len(),
         2,
-        "should contain CREATE TABLE and CREATE INDEX. Got: {:?}",
-        stmts
+        "should contain CREATE TABLE and CREATE INDEX. Got: {stmts:?}"
     );
     assert!(
         stmts[0].starts_with("CREATE TABLE `users`"),
@@ -565,37 +560,32 @@ async fn test_alter_table_migration_sql_columns_and_indices() {
         stmts_non_destructive
             .iter()
             .any(|s| s == "ALTER TABLE `users` MODIFY COLUMN `id` int NOT NULL;"),
-        "Missing MODIFY COLUMN for 'id'. Statements: {:?}",
-        stmts_non_destructive
+        "Missing MODIFY COLUMN for 'id'. Statements: {stmts_non_destructive:?}"
     );
     assert!(
         stmts_non_destructive.iter().any(|s| s
             == "ALTER TABLE `users` ADD COLUMN `name` varchar(150);"
             || s == "ALTER TABLE `users` ADD COLUMN `name` varchar(150) NULL DEFAULT NULL;"),
-        "Missing ADD COLUMN for 'name'. Statements: {:?}",
-        stmts_non_destructive
+        "Missing ADD COLUMN for 'name'. Statements: {stmts_non_destructive:?}"
     );
     assert!(
         stmts_non_destructive
             .iter()
             .any(|s| s == "CREATE UNIQUE INDEX `u_name` ON `users` (`name`);"),
-        "Missing CREATE UNIQUE INDEX for 'u_name'. Statements: {:?}",
-        stmts_non_destructive
+        "Missing CREATE UNIQUE INDEX for 'u_name'. Statements: {stmts_non_destructive:?}"
     );
     // Should NOT drop legacy column or idx_old without destructive
     assert!(
         !stmts_non_destructive
             .iter()
             .any(|s| s.contains("DROP COLUMN `legacy`")),
-        "Found unexpected DROP COLUMN 'legacy' in non-destructive mode. Statements: {:?}",
-        stmts_non_destructive
+        "Found unexpected DROP COLUMN 'legacy' in non-destructive mode. Statements: {stmts_non_destructive:?}"
     );
     assert!(
         !stmts_non_destructive
             .iter()
             .any(|s| s.contains("DROP INDEX `idx_old`")),
-        "Found unexpected DROP INDEX 'idx_old' in non-destructive mode. Statements: {:?}",
-        stmts_non_destructive
+        "Found unexpected DROP INDEX 'idx_old' in non-destructive mode. Statements: {stmts_non_destructive:?}"
     );
 
     let stmts_destructive = drv
@@ -606,15 +596,13 @@ async fn test_alter_table_migration_sql_columns_and_indices() {
         stmts_destructive
             .iter()
             .any(|s| s == "ALTER TABLE `users` DROP COLUMN `legacy`;"),
-        "Missing DROP COLUMN 'legacy' in destructive mode. Statements: {:?}",
-        stmts_destructive
+        "Missing DROP COLUMN 'legacy' in destructive mode. Statements: {stmts_destructive:?}"
     );
     assert!(
         stmts_destructive
             .iter()
             .any(|s| s == "DROP INDEX `idx_old` ON `users`;"),
-        "Missing DROP INDEX 'idx_old' in destructive mode. Statements: {:?}",
-        stmts_destructive
+        "Missing DROP INDEX 'idx_old' in destructive mode. Statements: {stmts_destructive:?}"
     );
 }
 

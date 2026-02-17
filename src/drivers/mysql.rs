@@ -85,6 +85,7 @@ impl MySqlDriver {
         Ok(tables)
     }
 
+    #[must_use] 
     pub fn map_mysql_type(
         &self,
         mysql_column_type: &str,
@@ -105,18 +106,15 @@ impl MySqlDriver {
             .unwrap_or(mysql_data_type_lower.clone());
 
         // if unsigned rule is set we convert to bigint and dont set is_unsigned (would be obsolete/confusing with bigint)
-        if let Some(mysql_cfg) = &config.mysql {
-            if let Some(rules) = &mysql_cfg.rules {
-                if let Some(on_read) = &rules.on_read {
-                    if on_read.unsigned_int_to_bigint.unwrap_or(false)
+        if let Some(mysql_cfg) = &config.mysql
+            && let Some(rules) = &mysql_cfg.rules
+                && let Some(on_read) = &rules.on_read
+                    && on_read.unsigned_int_to_bigint.unwrap_or(false)
                         && is_unsigned
                         && mysql_data_type_lower.contains("int")
                     {
                         target_type = "bigint".to_string();
                     }
-                }
-            }
-        }
 
         target_type
     }
@@ -128,7 +126,7 @@ impl MySqlDriver {
     ) -> Result<Vec<ForgeColumn>, Box<dyn std::error::Error>> {
         // SHOW FULL FIELDS gives:
         // Field, Type, Collation, Null, Key, Default, Extra, Privileges, Comment
-        let query = format!("SHOW FULL FIELDS FROM `{}`", table_name);
+        let query = format!("SHOW FULL FIELDS FROM `{table_name}`");
         let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
 
         let mut columns = Vec::new();
@@ -150,12 +148,12 @@ impl MySqlDriver {
                     .unwrap_or_default()
             };
 
-            let col_name = get_s("Field").to_string();
+            let col_name = get_s("Field").clone();
             let mysql_column_type = get_s("Type"); // i.e. "int(11) unsigned" or "enum('a','b')"
 
             // extract pure data type. "int (11) unsigned" -> "int",  or "enum('a','b')" -> "enum"
             let mysql_data_type = mysql_column_type
-                .split(|c| c == '(' || c == ' ')
+                .split(['(', ' '])
                 .next()
                 .unwrap_or(&mysql_column_type)
                 .to_lowercase();
@@ -199,8 +197,8 @@ impl MySqlDriver {
             let mut precision: Option<u32> = None;
             let mut scale: Option<u32> = None;
 
-            if let Some(start) = mysql_column_type.find('(') {
-                if let Some(end_rel) = mysql_column_type[start + 1..].find(')') {
+            if let Some(start) = mysql_column_type.find('(')
+                && let Some(end_rel) = mysql_column_type[start + 1..].find(')') {
                     let inside = &mysql_column_type[start + 1..start + 1 + end_rel];
                     let inside_clean = inside.replace(' ', "");
 
@@ -220,19 +218,16 @@ impl MySqlDriver {
                         || mysql_data_type.eq_ignore_ascii_case("decimal")
                     {
                         let parts: Vec<&str> = inside_clean.split(',').collect();
-                        if let Some(p0) = parts.get(0) {
-                            if let Ok(p) = p0.parse::<u32>() {
+                        if let Some(p0) = parts.first()
+                            && let Ok(p) = p0.parse::<u32>() {
                                 precision = Some(p);
                             }
-                        }
-                        if let Some(p1) = parts.get(1) {
-                            if let Ok(s) = p1.parse::<u32>() {
+                        if let Some(p1) = parts.get(1)
+                            && let Ok(s) = p1.parse::<u32>() {
                                 scale = Some(s);
                             }
-                        }
                     }
                 }
-            }
 
             columns.push(ForgeColumn {
                 name: col_name,
@@ -258,11 +253,12 @@ impl MySqlDriver {
     }
 
     // extracts 'bla','fasel' from enum('bla','fasel') / set('a','b')
+    #[must_use] 
     pub fn parse_mysql_enum_values(&self, col_type: &str) -> Vec<String> {
         let trimmed = col_type.trim();
         let lower = trimmed.to_lowercase();
         let without_prefix = if lower.starts_with("enum(") || lower.starts_with("set(") {
-            trimmed.splitn(2, '(').nth(1).unwrap_or(trimmed)
+            trimmed.split_once('(').map_or(trimmed, |x| x.1)
         } else {
             trimmed
         };
@@ -280,7 +276,7 @@ impl MySqlDriver {
     ) -> Result<Vec<ForgeIndex>, Box<dyn std::error::Error>> {
         // SHOW INDEX FROM `table` gives:
         // Table, Non_unique, Key_name, Seq_in_index, Column_name, Collation, Cardinality, ...
-        let query = format!("SHOW INDEX FROM `{}`", table_name);
+        let query = format!("SHOW INDEX FROM `{table_name}`");
         let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
 
         let mut indices_map: HashMap<String, ForgeIndex> = HashMap::new();
@@ -351,12 +347,13 @@ impl MySqlDriver {
 
     pub async fn fetch_foreign_keys(
         &self,
-        table_name: &str,
+        _table_name: &str,
     ) -> Result<Vec<ForgeForeignKey>, Box<dyn std::error::Error>> {
         // TODO implement after first release
         Ok(Vec::new())
     }
 
+    #[must_use] 
     pub fn field_migration_sql(&self, field: ForgeColumn, config: &ForgeConfig) -> String {
         let target_types = config.get_type_list("mysql", "on_write");
 
@@ -372,14 +369,14 @@ impl MySqlDriver {
         ret.push_str(&format!("`{}`", field.name));
 
         // Type & Parameters
-        ret.push_str(&format!(" {}", sql_type));
+        ret.push_str(&format!(" {sql_type}"));
 
         match sql_type.as_str() {
             "decimal" => {
                 if let (Some(p), Some(s)) = (field.precision, field.scale) {
-                    ret.push_str(&format!("({},{})", p, s));
+                    ret.push_str(&format!("({p},{s})"));
                 } else if let Some(p) = field.precision {
-                    ret.push_str(&format!("({})", p));
+                    ret.push_str(&format!("({p})"));
                 }
             }
             "tinyint" | "smallint" | "mediumint" | "int" | "integer" | "bigint" => {
@@ -391,13 +388,13 @@ impl MySqlDriver {
             "varchar" | "char" | "binary" | "varbinary" | "bit" | "datetime" | "timestamp"
             | "time" => {
                 if let Some(l) = field.length {
-                    ret.push_str(&format!("({})", l));
+                    ret.push_str(&format!("({l})"));
                 }
             }
             "enum" | "set" => {
                 if let Some(ref vals) = field.enum_values {
                     let formatted_vals: Vec<String> =
-                        vals.iter().map(|v| format!("'{}'", v)).collect();
+                        vals.iter().map(|v| format!("'{v}'")).collect();
                     ret.push_str(&format!("({})", formatted_vals.join(",")));
                 }
             }
@@ -410,25 +407,24 @@ impl MySqlDriver {
             || sql_type_lower == "json";
 
         // Nullable & Default NULL
-        if !field.is_nullable {
-            ret.push_str(" NOT NULL");
-        } else {
+        if field.is_nullable {
             ret.push_str(" NULL");
             if field.default.is_none() && !skip_default {
                 ret.push_str(" DEFAULT NULL");
             }
+        } else {
+            ret.push_str(" NOT NULL");
         }
 
         // Default Value
-        if let Some(ref def) = field.default {
-            if !skip_default {
+        if let Some(ref def) = field.default
+            && !skip_default {
                 if def.to_lowercase() == "current_timestamp" {
                     ret.push_str(" DEFAULT CURRENT_TIMESTAMP");
                 } else {
-                    ret.push_str(&format!(" DEFAULT '{}'", def));
+                    ret.push_str(&format!(" DEFAULT '{def}'"));
                 }
             }
-        }
 
         // Auto Increment
         if field.auto_increment {
@@ -436,20 +432,20 @@ impl MySqlDriver {
         }
 
         // On Update
-        if let Some(ref on_upd) = field.on_update {
-            if let Some(ref def) = field.default {
+        if let Some(ref on_upd) = field.on_update
+            && let Some(ref def) = field.default {
                 if def.to_lowercase() == "current_timestamp" {
                     ret.push_str(" ON UPDATE CURRENT_TIMESTAMP");
                 } else {
-                    ret.push_str(&format!(" ON UPDATE {}", on_upd));
+                    ret.push_str(&format!(" ON UPDATE {on_upd}"));
                 }
             }
-        }
 
         ret
     }
 
-    /// builds CREATE TABLE Statement for MySQL
+    /// builds CREATE TABLE Statement for `MySQL`
+    #[must_use] 
     pub fn build_mysql_create_table_sql(&self, table: &ForgeTable, config: &ForgeConfig) -> String {
         let mut col_defs = Vec::new();
         let mut pks = Vec::new();
@@ -583,7 +579,7 @@ impl MySqlDriver {
 
         // Check all indices in DST (current state)
         if destructive {
-            for (name, _dst_idx) in &dst_idx_map {
+            for name in dst_idx_map.keys() {
                 if !src_idx_map.contains_key(name) {
                     // In DST but NOT in SRC -> DROP (if destructive)
                     let sql = self.build_mysql_drop_index_sql(&dst_table.name, name);
@@ -595,6 +591,7 @@ impl MySqlDriver {
         Ok(all_statements)
     }
 
+    #[must_use] 
     pub fn add_column_migration(
         &self,
         table_name: &str,
@@ -604,10 +601,12 @@ impl MySqlDriver {
         self.build_mysql_add_column_sql(table_name, src_col, config)
     }
 
+    #[must_use] 
     pub fn drop_column_migration(&self, table_name: &str, col_name: &str) -> String {
-        format!("ALTER TABLE `{}` DROP COLUMN `{}`;", table_name, col_name)
+        format!("ALTER TABLE `{table_name}` DROP COLUMN `{col_name}`;")
     }
 
+    #[must_use] 
     pub fn modify_column_migration(
         &self,
         table_name: &str,
@@ -639,12 +638,13 @@ impl MySqlDriver {
 
         if changed {
             let sql_def = self.field_migration_sql(src_col.clone(), config);
-            return format!("ALTER TABLE `{}` MODIFY COLUMN {};", table_name, sql_def);
+            return format!("ALTER TABLE `{table_name}` MODIFY COLUMN {sql_def};");
         }
-        "".to_string()
+        String::new()
     }
 
     /// builds ALTER TABLE ADD COLUMN Statement
+    #[must_use] 
     pub fn build_mysql_add_column_sql(
         &self,
         table_name: &str,
@@ -652,10 +652,11 @@ impl MySqlDriver {
         config: &ForgeConfig,
     ) -> String {
         let sql_def = self.field_migration_sql(col.clone(), config);
-        format!("ALTER TABLE `{}` ADD COLUMN {};", table_name, sql_def)
+        format!("ALTER TABLE `{table_name}` ADD COLUMN {sql_def};")
     }
 
     /// builds CREATE INDEX Statement
+    #[must_use] 
     pub fn build_mysql_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
         let index_type = index.index_type.as_deref().unwrap_or("").to_uppercase();
         let is_fulltext = index_type == "FULLTEXT";
@@ -683,9 +684,9 @@ impl MySqlDriver {
                     .and_then(|p| p.get(i))
                     .and_then(|v| *v);
                 if let Some(len) = prefix {
-                    format!("`{}`({})", c, len)
+                    format!("`{c}`({len})")
                 } else {
-                    format!("`{}`", c)
+                    format!("`{c}`")
                 }
             })
             .collect::<Vec<_>>()
@@ -697,11 +698,13 @@ impl MySqlDriver {
     }
 
     /// builds DROP INDEX Statement
+    #[must_use] 
     pub fn build_mysql_drop_index_sql(&self, table_name: &str, index_name: &str) -> String {
-        format!("DROP INDEX `{}` ON `{}`;", index_name, table_name)
+        format!("DROP INDEX `{index_name}` ON `{table_name}`;")
     }
 
     /// comparison if two indexes are identical (without names, thats already checked via map-key)
+    #[must_use] 
     pub fn indices_equal(&self, a: &ForgeIndex, b: &ForgeIndex) -> bool {
         if a.is_unique != b.is_unique {
             return false;
@@ -740,7 +743,7 @@ impl MySqlDriver {
     }
 
     /// read a column from an index as string
-    /// helper if MySQL VARBINARY or BLOB are returned from mysql.
+    /// helper if `MySQL` VARBINARY or BLOB are returned from mysql.
     pub fn get_string_at_index(&self, row: &sqlx::mysql::MySqlRow, index: usize) -> Option<String> {
         let bytes: Vec<u8> = row.try_get(index).unwrap_or_default();
 
@@ -768,10 +771,8 @@ impl MySqlDriver {
             if let Ok(dt_utc) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
                 return Ok(ForgeUniversalValue::DateTime(dt_utc.naive_utc()));
             }
-        } else {
-            if let Ok(dt) = row.try_get::<chrono::NaiveDateTime, _>(index) {
-                return Ok(ForgeUniversalValue::DateTime(dt));
-            }
+        } else if let Ok(dt) = row.try_get::<chrono::NaiveDateTime, _>(index) {
+            return Ok(ForgeUniversalValue::DateTime(dt));
         }
 
         // special case for MySQL "Zero-Dates" or decode error
@@ -813,7 +814,7 @@ impl MySqlDriver {
                 // local error adapter
                 let to_err = |e| ForgeError::ColumnDecode {
                     column: col_name.to_string(),
-                    type_info: type_name.to_string(),
+                    type_info: type_name.clone(),
                     source: e,
                 };
 
@@ -835,15 +836,12 @@ impl MySqlDriver {
 
                     "YEAR" => {
                         let year = match row.try_get::<u16, _>(i) {
-                            Ok(val) => val as i32,
-                            Err(_) => match row.try_get::<i16, _>(i) {
-                                Ok(val) => val as i32,
-                                Err(_) => {
-                                    let raw = row.try_get::<String, _>(i).map_err(to_err)?;
-                                    raw.parse::<i32>().map_err(|_| {
-                                        to_err(sqlx::Error::Decode("Invalid YEAR value".into()))
-                                    })?
-                                }
+                            Ok(val) => i32::from(val),
+                            Err(_) => if let Ok(val) = row.try_get::<i16, _>(i) { i32::from(val) } else {
+                                let raw = row.try_get::<String, _>(i).map_err(to_err)?;
+                                raw.parse::<i32>().map_err(|_| {
+                                    to_err(sqlx::Error::Decode("Invalid YEAR value".into()))
+                                })?
                             },
                         };
                         ForgeUniversalValue::Year(year)
@@ -897,7 +895,7 @@ impl MySqlDriver {
                     _ => {
                         return Err(ForgeError::UnsupportedMySQLType {
                             column: col_name.to_string(),
-                            type_info: type_name.to_string(),
+                            type_info: type_name.clone(),
                         });
                     }
                 };
@@ -950,7 +948,7 @@ impl DatabaseDriver for MySqlDriver {
                 source_database_name: db_name,
                 created_at: chrono::Local::now().to_rfc3339(),
                 forge_version: env!("CARGO_PKG_VERSION").to_string(),
-                config_file: "".to_string(),
+                config_file: String::new(),
             },
             tables,
         })
@@ -1015,7 +1013,7 @@ impl DatabaseDriver for MySqlDriver {
                 success_count += 1;
             }
             if verbose {
-                println!("{} SQL-Statements executed.", success_count);
+                println!("{success_count} SQL-Statements executed.");
             }
         }
 
@@ -1035,7 +1033,7 @@ impl DatabaseDriver for MySqlDriver {
         >,
         Box<dyn std::error::Error>,
     > {
-        let query_string = format!("SELECT * FROM `{}`", table_name);
+        let query_string = format!("SELECT * FROM `{table_name}`");
 
         let stream = async_stream::try_stream! {
             let mut rows = sqlx::query(&query_string).fetch(&self.pool);
@@ -1075,13 +1073,13 @@ impl DatabaseDriver for MySqlDriver {
         } else {
             let columns = order_by
                 .iter()
-                .map(|col| format!("`{}`", col))
+                .map(|col| format!("`{col}`"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(" ORDER BY {}", columns)
+            format!(" ORDER BY {columns}")
         };
 
-        let query_string = format!("SELECT * FROM `{}`{}", table_name, order_clause);
+        let query_string = format!("SELECT * FROM `{table_name}`{order_clause}");
 
         let stream = async_stream::try_stream! {
             let mut rows = sqlx::query(&query_string).fetch(&self.pool);
@@ -1118,22 +1116,22 @@ impl DatabaseDriver for MySqlDriver {
         let columns: Vec<String> = first_row.keys().cloned().collect();
         let column_names = columns
             .iter()
-            .map(|c| format!("`{}`", c))
+            .map(|c| format!("`{c}`"))
             .collect::<Vec<_>>()
             .join(", ");
 
         // prepare SQL-Statement
-        let mut sql = format!("INSERT INTO `{}` ({}) VALUES ", table_name, column_names);
+        let mut sql = format!("INSERT INTO `{table_name}` ({column_names}) VALUES ");
 
         let mut placeholders = Vec::new();
         for _ in 0..chunk.len() {
             let row_placeholders = vec!["?"; columns.len()].join(", ");
-            placeholders.push(format!("({})", row_placeholders));
+            placeholders.push(format!("({row_placeholders})"));
         }
         sql.push_str(&placeholders.join(", "));
 
         if dry_run {
-            println!("Dry run SQL = {}", sql);
+            println!("Dry run SQL = {sql}");
         } else {
             // create query and bind values
             let mut query = sqlx::query(&sql);
@@ -1150,8 +1148,7 @@ impl DatabaseDriver for MySqlDriver {
 
             if let Err(e) = query.execute(&self.pool).await {
                 eprintln!(
-                    "Batch insert failed for table `{}`. Retrying row-by-row for logging...",
-                    table_name
+                    "Batch insert failed for table `{table_name}`. Retrying row-by-row for logging..."
                 );
 
                 // we build SQL for one row at a time: INSERT INTO `table` (`col1`) VALUES (?)
@@ -1160,7 +1157,7 @@ impl DatabaseDriver for MySqlDriver {
                     table_name,
                     columns
                         .iter()
-                        .map(|c| format!("`{}`", c))
+                        .map(|c| format!("`{c}`"))
                         .collect::<Vec<_>>()
                         .join(", "),
                     vec!["?"; columns.len()].join(", ")
@@ -1176,11 +1173,11 @@ impl DatabaseDriver for MySqlDriver {
 
                     // execute one row
                     if let Err(single_err) = single_query.execute(&self.pool).await {
-                        let row_data = format!("{:?}", row_map);
+                        let row_data = format!("{row_map:?}");
                         let err_msg = single_err.to_string();
 
                         // now we can log the error of one row
-                        eprintln!("Error in Row: {} | Error: {}", row_data, err_msg);
+                        eprintln!("Error in Row: {row_data} | Error: {err_msg}");
                         log_error_to_file(table_name, &row_data, &err_msg);
                     }
                 }
@@ -1197,7 +1194,7 @@ impl DatabaseDriver for MySqlDriver {
         &self,
         table_name: &str,
     ) -> Result<u64, Box<dyn std::error::Error>> {
-        let query = format!("SELECT COUNT(*) FROM `{}`", table_name);
+        let query = format!("SELECT COUNT(*) FROM `{table_name}`");
         let row: (i64,) = sqlx::query_as(&query).fetch_one(&self.pool).await?;
         Ok(row.0 as u64)
     }

@@ -23,7 +23,10 @@ fn order_by_columns(table: &ForgeTable) -> Vec<String> {
 }
 
 fn values_equal(left: &ForgeUniversalValue, right: &ForgeUniversalValue) -> bool {
-    use ForgeUniversalValue::*;
+    use ForgeUniversalValue::{
+        Binary, Boolean, Date, DateTime, Decimal, Float, Inet, Integer, Json, Null, Text, Time,
+        UnsignedInteger, Uuid, Year, ZeroDateTime,
+    };
 
     match (left, right) {
         (Null, Null) | (ZeroDateTime, ZeroDateTime) => true,
@@ -37,8 +40,8 @@ fn values_equal(left: &ForgeUniversalValue, right: &ForgeUniversalValue) -> bool
         (Binary(a), Binary(b)) => a == b,
         (Boolean(a), Boolean(b)) => a == b,
         (Year(a), Year(b)) => a == b,
-        (Year(a), Integer(b)) => (*a as i64) == *b,
-        (Integer(a), Year(b)) => *a == (*b as i64),
+        (Year(a), Integer(b)) => i64::from(*a) == *b,
+        (Integer(a), Year(b)) => *a == i64::from(*b),
         (Time(a), Time(b)) => a == b,
         (Date(a), Date(b)) => a == b,
         (DateTime(a), DateTime(b)) => a == b,
@@ -60,8 +63,7 @@ fn rows_equal(
         let target_value = target_row.get(column).unwrap_or(&ForgeUniversalValue::Null);
         if !values_equal(source_value, target_value) {
             return Err(format!(
-                "Mismatch in column `{}`: expected {:?} but got {:?}",
-                column, source_value, target_value
+                "Mismatch in column `{column}`: expected {source_value:?} but got {target_value:?}"
             ));
         }
     }
@@ -136,7 +138,7 @@ pub async fn replicate_data(
     target: &dyn DatabaseDriver,
     schema: &ForgeSchema,
     dry_run: bool,
-    verbose: bool,
+    _verbose: bool,
     halt_on_error: bool,
     verify_after_write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -248,14 +250,12 @@ pub fn log_error_to_file(table: &str, row_data: &String, error_msg: &str) {
         .open("migration_errors.log")
         .expect("Konnte Log-Datei nicht öffnen");
 
-    let line = format!(
-        "TABLE: {} | ERROR: {} | DATA: {:?}\n",
-        table, error_msg, row_data
-    );
+    let line = format!("TABLE: {table} | ERROR: {error_msg} | DATA: {row_data:?}\n");
     let _ = file.write_all(line.as_bytes());
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
@@ -274,7 +274,7 @@ mod tests {
     #[async_trait]
     impl DatabaseDriver for MockDriver {
         async fn db_is_empty(&self) -> Result<bool, Box<dyn std::error::Error>> {
-            Ok(self.data.values().all(|rows| rows.is_empty()))
+            Ok(self.data.values().all(std::vec::Vec::is_empty))
         }
 
         async fn fetch_schema(
@@ -353,8 +353,7 @@ mod tests {
             Ok(self
                 .data
                 .get(table_name)
-                .map(|rows| rows.len() as u64)
-                .unwrap_or(0))
+                .map_or(0, |rows| rows.len() as u64))
         }
     }
 

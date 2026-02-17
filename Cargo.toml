@@ -3,6 +3,7 @@ name = "fluxforge"
 version = "0.1.0"
 authors = ["Andreas Frackowiak <af@ins.de>"]
 edition = "2024"
+rust-version = "1.92"
 description = "A database schema converter and migration engine for MySQL and PostgreSQL"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
@@ -20,9 +21,17 @@ path = "src/lib.rs"
 name = "fluxforge"
 path = "src/main.rs"
 
-
 [features]
 integration-tests = []
+
+[lints.clippy]
+# deny dangerous patterns (should be allowed in tests, we do want panics in tests as feedback)
+unwrap_used = "warn"  # warn instead of deny for fix check
+todo = "deny"         # we should be finished before publishing
+dbg_macro = "deny"    # no remaining debug output in production
+panic = "deny"        # panics() in production are bad
+similar_names = "allow"
+
 
 [dependencies]
 clap = { version = "4.5.59", features = ["derive"] }

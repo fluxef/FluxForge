@@ -1,18 +1,28 @@
 # clippy.toml
 
-# Erlaube etwas komplexere Funktionen (Standard ist oft zu streng für Parser/Migrationen)
-too-many-lines-threshold = 150
-too-many-arguments-threshold = 7
+too-many-lines-threshold = 120
+too-many-arguments-threshold = 8
 
-# Verhindere, dass man versehentlich Float-Vergleiche macht (wichtig für 'decimal')
 allow-expect-in-tests = true
 
-# Ignoriere bestimmte Wörter in Variablennamen (z.B. wenn die DB-Spalte 'id_raw' heißt)
-disallowed-names = ["toto", "tata", "foo"]
+disallowed-names = ["toto", "tata"]
 
-# Setze ein Limit für die kognitive Komplexität (hilft, verschachtelte Match-Blocks zu vermeiden)
 cognitive-complexity-threshold = 20
 
-# Warnen, wenn Strings mit + statt format! zusammengefügt werden
-# (Performance-Check für deine SQL-String-Generierung)
-msrv = "1.70.0" # Minimum Supported Rust Version
+msrv = "1.92.0"
+
+disallowed-methods = [
+    { path = "std::env::set_var", reason = "Not thread safe use config-opjets instead" },
+    { path = "std::mem::forget", reason = "risk of mem leaks, instead use Box or ManuallyDrop" }
+]
+
+disallowed-types = [
+    { path = "std::cell::RefCell", reason = "better use Mutex for thread security" }
+]
+
+doc-valid-idents = [
+    "RustRover",
+    "PostgreSQL",
+    "Redis",
+    "JSON"
+]

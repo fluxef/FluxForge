@@ -32,6 +32,6 @@ pub async fn create_driver(
         let pool = PgPool::connect(url).await?;
         Ok(Box::new(postgres::PostgresDriver { pool: Some(pool) }))
     } else {
-        Err(format!("Unsupported database protocol in URL: {}", url).into())
+        Err(format!("Unsupported database protocol in URL: {url}").into())
     }
 }

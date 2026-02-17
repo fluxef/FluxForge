@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
+
 use sqlx::{Connection, MySqlConnection, MySqlPool, PgConnection, PgPool};
 use uuid::Uuid;
 
@@ -22,7 +24,7 @@ impl TestContext {
     pub async fn setup() -> Self {
         // create a uniqe db for this test run
         let unique_id = Uuid::new_v4().simple().to_string();
-        let db_name = format!("test_db_{}", unique_id);
+        let db_name = format!("test_db_{unique_id}");
 
         //  load URLs from environment (set from run_tests.sh)
         let mysql_ref_url =
@@ -37,13 +39,12 @@ impl TestContext {
         let m_admin_result = MySqlConnection::connect(&mysql_admin_url).await;
         let mut m_admin_conn = match m_admin_result {
             Ok(conn) => conn,
-            Err(e) => panic!(
-                "\n\nMySQL Connect (Admin) failed!\nURL: {}\nFehler: {}\n",
-                mysql_admin_url, e
-            ),
+            Err(e) => {
+                panic!("\n\nMySQL Connect (Admin) failed!\nURL: {mysql_admin_url}\nError: {e}\n")
+            }
         };
 
-        sqlx::query(&format!("CREATE DATABASE {}", db_name))
+        sqlx::query(&format!("CREATE DATABASE {db_name}"))
             .execute(&mut m_admin_conn)
             .await
             .expect("Error creating temporary MySQL DB");
@@ -52,13 +53,12 @@ impl TestContext {
         let p_admin_result = PgConnection::connect(&pg_admin_url).await;
         let mut p_admin_conn = match p_admin_result {
             Ok(conn) => conn,
-            Err(e) => panic!(
-                "\n\nPostgres Connect (Admin) failed!\nURL: {}\nFehler: {}\n",
-                pg_admin_url, e
-            ),
+            Err(e) => {
+                panic!("\n\nPostgres Connect (Admin) failed!\nURL: {pg_admin_url}\nError: {e}\n")
+            }
         };
 
-        sqlx::query(&format!("CREATE DATABASE {}", db_name))
+        sqlx::query(&format!("CREATE DATABASE {db_name}"))
             .execute(&mut p_admin_conn)
             .await
             .expect("Error creating temporary Postgres DB");
@@ -67,10 +67,10 @@ impl TestContext {
         let mysql_ref = MySqlPool::connect(&mysql_ref_url).await.unwrap();
         let pg_ref = PgPool::connect(&pg_ref_url).await.unwrap();
 
-        let mysql_target_pool = MySqlPool::connect(&format!("{}/{}", mysql_admin_url, db_name))
+        let mysql_target_pool = MySqlPool::connect(&format!("{mysql_admin_url}/{db_name}"))
             .await
             .unwrap();
-        let pg_target_pool = PgPool::connect(&format!("{}/{}", pg_admin_url, db_name))
+        let pg_target_pool = PgPool::connect(&format!("{pg_admin_url}/{db_name}"))
             .await
             .unwrap();
 
@@ -101,14 +101,14 @@ impl Drop for TestContext {
             rt.block_on(async {
                 // MySQL Cleanup
                 if let Ok(mut conn) = MySqlConnection::connect(&m_url).await {
-                    let _ = sqlx::query(&format!("DROP DATABASE {}", name))
+                    let _ = sqlx::query(&format!("DROP DATABASE {name}"))
                         .execute(&mut conn)
                         .await;
                 }
 
                 // Postgres Cleanup
                 if let Ok(mut conn) = PgConnection::connect(&p_url).await {
-                    let _ = sqlx::query(&format!("DROP DATABASE {} WITH (FORCE)", name))
+                    let _ = sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)"))
                         .execute(&mut conn)
                         .await;
                 }

@@ -17,6 +17,7 @@ pub struct ForgeConfig {
 
 impl ForgeConfig {
     /// get mappings for a database-type and direction
+    #[must_use] 
     pub fn get_type_list(
         &self,
         db_name: &str,
@@ -96,6 +97,7 @@ pub struct ForgeSchema {
 }
 
 impl ForgeSchema {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -120,6 +122,7 @@ pub struct ForgeTable {
 }
 
 impl ForgeTable {
+    #[must_use] 
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -146,6 +149,7 @@ pub struct ForgeColumn {
 }
 
 impl ForgeColumn {
+    #[must_use] 
     pub fn new(name: &str, data_type: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -205,7 +209,7 @@ pub enum ForgeError {
     #[error("PostgreSQL-Error in Columns '{column}': Type '{type_info}' is not supported yet.")]
     UnsupportedPostgresType { column: String, type_info: String },
 
-    /// A type in MySQL is not yet supported in match-code
+    /// A type in `MySQL` is not yet supported in match-code
     #[error("MySQL-Error in Columns '{column}': Type '{type_info}' is not yet supported.")]
     UnsupportedMySQLType { column: String, type_info: String },
 

@@ -56,12 +56,8 @@ fn rows_equal(
     target_row: &indexmap::IndexMap<String, ForgeUniversalValue>,
 ) -> Result<(), String> {
     for column in columns {
-        let source_value = source_row
-            .get(column)
-            .unwrap_or(&ForgeUniversalValue::Null);
-        let target_value = target_row
-            .get(column)
-            .unwrap_or(&ForgeUniversalValue::Null);
+        let source_value = source_row.get(column).unwrap_or(&ForgeUniversalValue::Null);
+        let target_value = target_row.get(column).unwrap_or(&ForgeUniversalValue::Null);
         if !values_equal(source_value, target_value) {
             return Err(format!(
                 "Mismatch in column `{}`: expected {:?} but got {:?}",
@@ -85,7 +81,10 @@ async fn verify_table_data(
 
     let src_count = source.get_table_row_count(&table.name).await.unwrap_or(0);
     let tgt_count = target.get_table_row_count(&table.name).await.unwrap_or(0);
-    println!("Verifying '{}' | order_by={:?} | src_count={} | tgt_count={}", table.name, order_by, src_count, tgt_count);
+    println!(
+        "Verifying '{}' | order_by={:?} | src_count={} | tgt_count={}",
+        table.name, order_by, src_count, tgt_count
+    );
 
     let pb = multi.add(ProgressBar::new(tgt_count));
     pb.set_style(style.clone());
@@ -127,10 +126,7 @@ async fn verify_table_data(
         }
     }
 
-    pb.finish_with_message(format!(
-        "Verified: {} ({} rows)",
-        table.name, verified_rows
-    ));
+    pb.finish_with_message(format!("Verified: {} ({} rows)", table.name, verified_rows));
 
     Ok(())
 }
@@ -153,7 +149,7 @@ pub async fn replicate_data(
         .progress_chars("#>-");
 
     // if verbose {
-        println!("Starting data replication");
+    println!("Starting data replication");
     // }
 
     for table in &schema.tables {
@@ -278,10 +274,7 @@ mod tests {
     #[async_trait]
     impl DatabaseDriver for MockDriver {
         async fn db_is_empty(&self) -> Result<bool, Box<dyn std::error::Error>> {
-            Ok(self
-                .data
-                .values()
-                .all(|rows| rows.is_empty()))
+            Ok(self.data.values().all(|rows| rows.is_empty()))
         }
 
         async fn fetch_schema(
@@ -334,11 +327,7 @@ mod tests {
             >,
             Box<dyn std::error::Error>,
         > {
-            let rows = self
-                .data
-                .get(table_name)
-                .cloned()
-                .unwrap_or_default();
+            let rows = self.data.get(table_name).cloned().unwrap_or_default();
             let stream = async_stream::try_stream! {
                 for row in rows {
                     yield row;
@@ -374,15 +363,17 @@ mod tests {
         let mut id_column = crate::ForgeColumn::new("id", "int");
         id_column.is_primary_key = true;
         table.columns.push(id_column);
-        table.columns
-            .push(crate::ForgeColumn::new("name", "text"));
+        table.columns.push(crate::ForgeColumn::new("name", "text"));
         table
     }
 
     fn row(id: i64, name: &str) -> IndexMap<String, ForgeUniversalValue> {
         let mut map = IndexMap::new();
         map.insert("id".to_string(), ForgeUniversalValue::Integer(id));
-        map.insert("name".to_string(), ForgeUniversalValue::Text(name.to_string()));
+        map.insert(
+            "name".to_string(),
+            ForgeUniversalValue::Text(name.to_string()),
+        );
         map
     }
 

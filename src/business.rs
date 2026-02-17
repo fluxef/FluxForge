@@ -2,9 +2,7 @@ use crate::cli::Commands;
 use fluxforge::config::{get_config_file_path, load_config};
 use fluxforge::{drivers, ops, ForgeSchema};
 
-pub async fn handle_command(
-    command: Commands,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn handle_command(command: Commands) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Commands::Extract {
             source,
@@ -17,7 +15,7 @@ pub async fn handle_command(
             // load config, uses internal defaults if not file set
             let forge_config = load_config(config.clone())?;
 
-            let source_driver = drivers::create_driver(&source,&forge_config).await?;
+            let source_driver = drivers::create_driver(&source, &forge_config).await?;
 
             let mut extracted_schema = source_driver.fetch_schema(&forge_config).await?;
             extracted_schema.metadata.config_file = get_config_file_path(config.clone());
@@ -50,19 +48,17 @@ pub async fn handle_command(
             verbose,
             allow_destructive,
         } => {
-            
             // source = new state (from source which is file or DB)
             // target state = actual state of DB that will be changed
-            
+
             let forge_config = load_config(config.clone())?;
 
             let mut source_driver = None;
 
             let mut schema = if let Some(path) = schema {
                 // reading schema from file
-                let file = std::fs::File::open(&path).map_err(|e| {
-                    format!("Error opening Schema-File {:?}: {}", path, e)
-                })?;
+                let file = std::fs::File::open(&path)
+                    .map_err(|e| format!("Error opening Schema-File {:?}: {}", path, e))?;
                 let int_schema: ForgeSchema =
                     serde_json::from_reader(std::io::BufReader::new(file))
                         .map_err(|e| format!("Error parsing Schema-File {}.", e))?;
@@ -70,10 +66,8 @@ pub async fn handle_command(
                 int_schema
             } else {
                 // reading schema from source database
-                let src_url = source
-                    .as_ref()
-                    .ok_or("Source URL is required.")?;
-                let s_driver = drivers::create_driver(src_url,&forge_config).await?;
+                let src_url = source.as_ref().ok_or("Source URL is required.")?;
+                let s_driver = drivers::create_driver(src_url, &forge_config).await?;
                 let int_schema = s_driver.fetch_schema(&forge_config).await?;
                 source_driver = Some(s_driver);
 
@@ -85,11 +79,11 @@ pub async fn handle_command(
                 .map(|sorted| schema.tables = sorted)
                 .map_err(|e| format!("Circular Dependency Error: {}", e))?;
 
-            let target_driver = drivers::create_driver(&target,&forge_config).await?;
+            let target_driver = drivers::create_driver(&target, &forge_config).await?;
 
             // apply schema diff to target
             let statements = target_driver
-                .diff_and_apply_schema(&schema, &forge_config, dry_run, verbose,allow_destructive)
+                .diff_and_apply_schema(&schema, &forge_config, dry_run, verbose, allow_destructive)
                 .await?;
 
             if dry_run {
@@ -160,7 +154,7 @@ pub async fn handle_command(
                     .unwrap_or(false);
 
             // target database
-            let target_driver = drivers::create_driver(&target,&forge_config).await?;
+            let target_driver = drivers::create_driver(&target, &forge_config).await?;
 
             if !target_driver.db_is_empty().await? {
                 return Err("ERROR: Target is not empty!  \
@@ -168,7 +162,7 @@ pub async fn handle_command(
             }
 
             // source database
-            let source_driver = drivers::create_driver(&source,&forge_config).await?;
+            let source_driver = drivers::create_driver(&source, &forge_config).await?;
             let mut source_schema = source_driver.fetch_schema(&forge_config).await?;
 
             // sort tables (will become more important when foreign keys are implemented)
@@ -178,7 +172,7 @@ pub async fn handle_command(
 
             // apply schema diff to target
             let statements = target_driver
-                .diff_and_apply_schema(&source_schema, &forge_config, dry_run, verbose,true)
+                .diff_and_apply_schema(&source_schema, &forge_config, dry_run, verbose, true)
                 .await?;
 
             if dry_run {

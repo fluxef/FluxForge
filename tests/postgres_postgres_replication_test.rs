@@ -3,11 +3,11 @@ mod common;
 
 #[cfg(feature = "integration-tests")]
 mod tests {
-    use std::env;
     use crate::common::TestContext;
-    use sqlx::Row;
     use fluxforge::core::ForgeConfig;
     use fluxforge::{drivers, ops};
+    use sqlx::Row;
+    use std::env;
 
     #[tokio::test]
     async fn test_postgres_to_postgres_connection() {
@@ -44,24 +44,21 @@ mod tests {
         // creates Ref-Pools and an empty new  Postgres-Target-DB
         let ctx = TestContext::setup().await;
 
-
         let config_toml = r#"
 # standard-file without mapping
 
 "#;
 
-        let forge_config: ForgeConfig = toml::from_str(config_toml)
-            .expect("Error parsing postgres postgres config");
+        let forge_config: ForgeConfig =
+            toml::from_str(config_toml).expect("Error parsing postgres postgres config");
 
-
-        let source_url = env::var("POSTGRES_URL_REFERENCE")
-            .expect("POSTGRES_URL_REFERENCE is missing");
+        let source_url =
+            env::var("POSTGRES_URL_REFERENCE").expect("POSTGRES_URL_REFERENCE is missing");
         let target_url = format!("{}/{}", ctx.pg_admin_url, ctx.db_name);
 
         println!("test test_postgres_to_postgres_replicate_with_verify() ");
         println!("Postgres Source URL: {}", source_url);
         println!("Postgres Target URL: {}", target_url);
-
 
         let source_driver = drivers::create_driver(&source_url, &forge_config)
             .await
@@ -75,9 +72,8 @@ mod tests {
             .await
             .expect("Error fetching source schema");
 
-        let sorted_tables =
-            ops::sort_tables_by_dependencies(&source_schema)
-                .expect("Error sorting tables by dependencies");
+        let sorted_tables = ops::sort_tables_by_dependencies(&source_schema)
+            .expect("Error sorting tables by dependencies");
         source_schema.tables = sorted_tables;
 
         target_driver
@@ -94,11 +90,7 @@ mod tests {
             false,
             true,
         )
-            .await
-            .expect("Error replicating data with verify");
+        .await
+        .expect("Error replicating data with verify");
     }
-
-
-
-
 }

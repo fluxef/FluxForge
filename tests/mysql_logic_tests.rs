@@ -13,7 +13,10 @@ fn mk_driver() -> MySqlDriver {
     // Use a lazy pool that will not connect unless used.
     let opts = MySqlConnectOptions::from_str("mysql://user:pass@localhost:3306/testdb").unwrap();
     let pool = MySqlPoolOptions::new().connect_lazy_with(opts);
-    MySqlDriver { pool, zero_date_on_write: true }
+    MySqlDriver {
+        pool,
+        zero_date_on_write: true,
+    }
 }
 
 fn mk_config() -> ForgeConfig {
@@ -189,11 +192,41 @@ async fn test_field_migration_sql_comprehensive_coverage() {
     let cases = vec![
         // (Type, Precision, Scale, Default, ExpectedSQL)
         ("int", None, None, Some("0"), "`col` int NULL DEFAULT '0'"),
-        ("int", None, None, Some("123"), "`col` int NULL DEFAULT '123'"),
-        ("decimal", Some(10), Some(3), Some("0.000"), "`col` decimal(10,3) NULL DEFAULT '0.000'"),
-        ("decimal", Some(10), Some(3), Some("123.456"), "`col` decimal(10,3) NULL DEFAULT '123.456'"),
-        ("decimal", Some(10), None, Some("123"), "`col` decimal(10) NULL DEFAULT '123'"),
-        ("bigint", None, None, Some("0"), "`col` bigint NULL DEFAULT '0'"),
+        (
+            "int",
+            None,
+            None,
+            Some("123"),
+            "`col` int NULL DEFAULT '123'",
+        ),
+        (
+            "decimal",
+            Some(10),
+            Some(3),
+            Some("0.000"),
+            "`col` decimal(10,3) NULL DEFAULT '0.000'",
+        ),
+        (
+            "decimal",
+            Some(10),
+            Some(3),
+            Some("123.456"),
+            "`col` decimal(10,3) NULL DEFAULT '123.456'",
+        ),
+        (
+            "decimal",
+            Some(10),
+            None,
+            Some("123"),
+            "`col` decimal(10) NULL DEFAULT '123'",
+        ),
+        (
+            "bigint",
+            None,
+            None,
+            Some("0"),
+            "`col` bigint NULL DEFAULT '0'",
+        ),
     ];
 
     for (dtype, prec, scale, def, expected) in cases {
@@ -211,42 +244,69 @@ async fn test_field_migration_sql_comprehensive_coverage() {
     let mut c_v = col("name", "varchar");
     c_v.length = Some(50);
     c_v.is_nullable = true;
-    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` varchar(50) NULL DEFAULT NULL");
-    
+    assert_eq!(
+        drv.field_migration_sql(c_v.clone(), &config),
+        "`name` varchar(50) NULL DEFAULT NULL"
+    );
+
     c_v.data_type = "char".to_string();
-    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` char(50) NULL DEFAULT NULL");
+    assert_eq!(
+        drv.field_migration_sql(c_v.clone(), &config),
+        "`name` char(50) NULL DEFAULT NULL"
+    );
 
     // Test binary/varbinary length variations
     c_v.data_type = "binary".to_string();
-    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` binary(50) NULL DEFAULT NULL");
+    assert_eq!(
+        drv.field_migration_sql(c_v.clone(), &config),
+        "`name` binary(50) NULL DEFAULT NULL"
+    );
 
     c_v.data_type = "varbinary".to_string();
-    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` varbinary(50) NULL DEFAULT NULL");
+    assert_eq!(
+        drv.field_migration_sql(c_v.clone(), &config),
+        "`name` varbinary(50) NULL DEFAULT NULL"
+    );
 
     // Test datetime/timestamp/time fractional seconds precision
     c_v.data_type = "datetime".to_string();
     c_v.length = Some(3);
-    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` datetime(3) NULL DEFAULT NULL");
+    assert_eq!(
+        drv.field_migration_sql(c_v.clone(), &config),
+        "`name` datetime(3) NULL DEFAULT NULL"
+    );
 
     c_v.data_type = "timestamp".to_string();
     c_v.length = Some(6);
-    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` timestamp(6) NULL DEFAULT NULL");
+    assert_eq!(
+        drv.field_migration_sql(c_v.clone(), &config),
+        "`name` timestamp(6) NULL DEFAULT NULL"
+    );
 
     c_v.data_type = "time".to_string();
     c_v.length = Some(2);
-    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` time(2) NULL DEFAULT NULL");
+    assert_eq!(
+        drv.field_migration_sql(c_v.clone(), &config),
+        "`name` time(2) NULL DEFAULT NULL"
+    );
 
     // Test enum variations
     let mut c_e = col("mode", "enum");
     c_e.enum_values = Some(vec!["fast".into(), "slow".into()]);
     c_e.is_nullable = true;
-    assert_eq!(drv.field_migration_sql(c_e, &config), "`mode` enum('fast','slow') NULL DEFAULT NULL");
+    assert_eq!(
+        drv.field_migration_sql(c_e, &config),
+        "`mode` enum('fast','slow') NULL DEFAULT NULL"
+    );
 
     // Test set variations
     let mut c_s = col("flags", "set");
     c_s.enum_values = Some(vec!["red".into(), "green".into(), "blue".into()]);
     c_s.is_nullable = true;
-    assert_eq!(drv.field_migration_sql(c_s, &config), "`flags` set('red','green','blue') NULL DEFAULT NULL");
+    assert_eq!(
+        drv.field_migration_sql(c_s, &config),
+        "`flags` set('red','green','blue') NULL DEFAULT NULL"
+    );
 
     // Test NOT NULL variations (no default)
     let mut c_nn = col("id", "int");
@@ -264,7 +324,10 @@ async fn test_field_migration_sql_comprehensive_coverage() {
     c_upd.is_nullable = true;
     c_upd.default = Some("1".into());
     c_upd.on_update = Some("val + 1".into());
-    assert_eq!(drv.field_migration_sql(c_upd, &config), "`val` int NULL DEFAULT '1' ON UPDATE val + 1");
+    assert_eq!(
+        drv.field_migration_sql(c_upd, &config),
+        "`val` int NULL DEFAULT '1' ON UPDATE val + 1"
+    );
 }
 
 #[tokio::test]
@@ -272,7 +335,14 @@ async fn test_field_migration_sql_unsigned_matrix() {
     let drv = mk_driver();
     let config = mk_config();
 
-    let types = vec!["tinyint", "smallint", "mediumint", "int", "integer", "bigint"];
+    let types = vec![
+        "tinyint",
+        "smallint",
+        "mediumint",
+        "int",
+        "integer",
+        "bigint",
+    ];
     let unsigned_variants = vec![true, false];
 
     for t in types {

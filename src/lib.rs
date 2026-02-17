@@ -13,7 +13,6 @@ use std::pin::Pin;
 
 #[async_trait]
 pub trait DatabaseDriver: Send + Sync {
-    
     /// checks if database exists and is empty
     async fn db_is_empty(&self) -> Result<bool, Box<dyn std::error::Error>>;
 
@@ -74,5 +73,8 @@ pub trait DatabaseDriver: Send + Sync {
     ) -> Result<(), Box<dyn std::error::Error>>;
 
     /// gets row count for a table
-    async fn get_table_row_count(&self, table_name: &str) -> Result<u64, Box<dyn std::error::Error>>;
+    async fn get_table_row_count(
+        &self,
+        table_name: &str,
+    ) -> Result<u64, Box<dyn std::error::Error>>;
 }

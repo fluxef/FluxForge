@@ -262,10 +262,7 @@ impl MySqlDriver {
         let trimmed = col_type.trim();
         let lower = trimmed.to_lowercase();
         let without_prefix = if lower.starts_with("enum(") || lower.starts_with("set(") {
-            trimmed
-                .splitn(2, '(')
-                .nth(1)
-                .unwrap_or(trimmed)
+            trimmed.splitn(2, '(').nth(1).unwrap_or(trimmed)
         } else {
             trimmed
         };
@@ -391,7 +388,8 @@ impl MySqlDriver {
                 }
             }
 
-            "varchar" | "char" | "binary" | "varbinary" | "bit" | "datetime" | "timestamp" | "time" => {
+            "varchar" | "char" | "binary" | "varbinary" | "bit" | "datetime" | "timestamp"
+            | "time" => {
                 if let Some(l) = field.length {
                     ret.push_str(&format!("({})", l));
                 }
@@ -659,11 +657,7 @@ impl MySqlDriver {
 
     /// builds CREATE INDEX Statement
     pub fn build_mysql_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
-        let index_type = index
-            .index_type
-            .as_deref()
-            .unwrap_or("")
-            .to_uppercase();
+        let index_type = index.index_type.as_deref().unwrap_or("").to_uppercase();
         let is_fulltext = index_type == "FULLTEXT";
         let is_spatial = index_type == "SPATIAL";
         let type_prefix = if is_fulltext {
@@ -829,9 +823,7 @@ impl MySqlDriver {
                 }
 
                 let val = match type_name.as_str() {
-                    "DATETIME" | "TIMESTAMP" => {
-                        self.handle_datetime(row, i).map_err(to_err)?
-                    }
+                    "DATETIME" | "TIMESTAMP" => self.handle_datetime(row, i).map_err(to_err)?,
 
                     "DATE" => ForgeUniversalValue::Date(
                         row.try_get::<chrono::NaiveDate, _>(i).map_err(to_err)?,

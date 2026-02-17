@@ -25,8 +25,10 @@ impl TestContext {
         let db_name = format!("test_db_{}", unique_id);
 
         //  load URLs from environment (set from run_tests.sh)
-        let mysql_ref_url = std::env::var("MYSQL_URL_REFERENCE").expect("MYSQL_URL_REFERENCE fehlt");
-        let pg_ref_url = std::env::var("POSTGRES_URL_REFERENCE").expect("POSTGRES_URL_REFERENCE fehlt");
+        let mysql_ref_url =
+            std::env::var("MYSQL_URL_REFERENCE").expect("MYSQL_URL_REFERENCE fehlt");
+        let pg_ref_url =
+            std::env::var("POSTGRES_URL_REFERENCE").expect("POSTGRES_URL_REFERENCE fehlt");
 
         let mysql_admin_url = std::env::var("MYSQL_URL_ADMIN").expect("MYSQL_URL_ADMIN fehlt");
         let pg_admin_url = std::env::var("POSTGRES_URL_ADMIN").expect("POSTGRES_URL_ADMIN fehlt");
@@ -35,7 +37,10 @@ impl TestContext {
         let m_admin_result = MySqlConnection::connect(&mysql_admin_url).await;
         let mut m_admin_conn = match m_admin_result {
             Ok(conn) => conn,
-            Err(e) => panic!("\n\nMySQL Connect (Admin) failed!\nURL: {}\nFehler: {}\n", mysql_admin_url, e),
+            Err(e) => panic!(
+                "\n\nMySQL Connect (Admin) failed!\nURL: {}\nFehler: {}\n",
+                mysql_admin_url, e
+            ),
         };
 
         sqlx::query(&format!("CREATE DATABASE {}", db_name))
@@ -47,7 +52,10 @@ impl TestContext {
         let p_admin_result = PgConnection::connect(&pg_admin_url).await;
         let mut p_admin_conn = match p_admin_result {
             Ok(conn) => conn,
-            Err(e) => panic!("\n\nPostgres Connect (Admin) failed!\nURL: {}\nFehler: {}\n", pg_admin_url, e),
+            Err(e) => panic!(
+                "\n\nPostgres Connect (Admin) failed!\nURL: {}\nFehler: {}\n",
+                pg_admin_url, e
+            ),
         };
 
         sqlx::query(&format!("CREATE DATABASE {}", db_name))
@@ -59,8 +67,12 @@ impl TestContext {
         let mysql_ref = MySqlPool::connect(&mysql_ref_url).await.unwrap();
         let pg_ref = PgPool::connect(&pg_ref_url).await.unwrap();
 
-        let mysql_target_pool = MySqlPool::connect(&format!("{}/{}", mysql_admin_url, db_name)).await.unwrap();
-        let pg_target_pool = PgPool::connect(&format!("{}/{}", pg_admin_url, db_name)).await.unwrap();
+        let mysql_target_pool = MySqlPool::connect(&format!("{}/{}", mysql_admin_url, db_name))
+            .await
+            .unwrap();
+        let pg_target_pool = PgPool::connect(&format!("{}/{}", pg_admin_url, db_name))
+            .await
+            .unwrap();
 
         Self {
             mysql_ref,
@@ -89,16 +101,20 @@ impl Drop for TestContext {
             rt.block_on(async {
                 // MySQL Cleanup
                 if let Ok(mut conn) = MySqlConnection::connect(&m_url).await {
-                    let _ = sqlx::query(&format!("DROP DATABASE {}", name)).execute(&mut conn).await;
+                    let _ = sqlx::query(&format!("DROP DATABASE {}", name))
+                        .execute(&mut conn)
+                        .await;
                 }
 
                 // Postgres Cleanup
                 if let Ok(mut conn) = PgConnection::connect(&p_url).await {
-                    let _ = sqlx::query(&format!("DROP DATABASE {} WITH (FORCE)", name)).execute(&mut conn).await;
+                    let _ = sqlx::query(&format!("DROP DATABASE {} WITH (FORCE)", name))
+                        .execute(&mut conn)
+                        .await;
                 }
             });
         })
-            .join()
-            .unwrap();
+        .join()
+        .unwrap();
     }
 }

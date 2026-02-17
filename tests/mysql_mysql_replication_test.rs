@@ -14,8 +14,7 @@ mod tests {
     async fn test_mysql_to_mysql_connection() {
         // create Ref-Pools and a new , empty MySQL-target-DB
         let ctx = TestContext::setup().await;
-        let source_url = env::var("MYSQL_URL_REFERENCE")
-            .expect("MYSQL_URL_REFERENCE is missing");
+        let source_url = env::var("MYSQL_URL_REFERENCE").expect("MYSQL_URL_REFERENCE is missing");
         let target_url = format!("{}/{}", ctx.mysql_admin_url, ctx.db_name);
 
         println!("test test_mysql_to_mysql_connection()");
@@ -59,11 +58,10 @@ mod tests {
 zero_date = true
 "#;
 
-        let forge_config: ForgeConfig = toml::from_str(config_toml)
-            .expect("Error parsing mysql mysql config");
+        let forge_config: ForgeConfig =
+            toml::from_str(config_toml).expect("Error parsing mysql mysql config");
 
-        let source_url = env::var("MYSQL_URL_REFERENCE")
-            .expect("MYSQL_URL_REFERENCE is missing");
+        let source_url = env::var("MYSQL_URL_REFERENCE").expect("MYSQL_URL_REFERENCE is missing");
         let target_url = format!("{}/{}", ctx.mysql_admin_url, ctx.db_name);
 
         println!("test test_mysql_to_mysql_replicate_with_verify() ");
@@ -82,9 +80,8 @@ zero_date = true
             .await
             .expect("Error fetching source schema");
 
-        let sorted_tables =
-            ops::sort_tables_by_dependencies(&source_schema)
-                .expect("Error sorting tables by dependencies");
+        let sorted_tables = ops::sort_tables_by_dependencies(&source_schema)
+            .expect("Error sorting tables by dependencies");
         source_schema.tables = sorted_tables;
 
         target_driver
@@ -104,11 +101,4 @@ zero_date = true
         .await
         .expect("Error replicating data with verify");
     }
-
-
-
-
-
 }
-
-

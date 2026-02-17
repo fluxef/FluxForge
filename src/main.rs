@@ -1,5 +1,5 @@
-mod cli;
 mod business;
+mod cli;
 
 use clap::Parser;
 use cli::Cli;

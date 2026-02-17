@@ -6,8 +6,6 @@ use std::path::PathBuf;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
-
-
 }
 
 #[derive(Subcommand)]
@@ -22,11 +20,10 @@ pub enum Commands {
 
         #[arg(long)]
         config: Option<PathBuf>,
-        
+
         /// Verbose output
         #[arg(long)]
         verbose: bool,
-        
     },
     /// Migrate structure and optionally data
     #[command(group(
@@ -77,11 +74,11 @@ pub enum Commands {
         /// Output SQL statements without executing them
         #[arg(long)]
         dry_run: bool,
-        
+
         /// Verbose output
         #[arg(long)]
         verbose: bool,
-        
+
         // stop data transfer if sql error writing sql data
         #[arg(long)]
         halt_on_error: bool,

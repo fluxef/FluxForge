@@ -176,6 +176,8 @@ impl PostgresDriver {
                 name: index_name,
                 columns: Vec::new(),
                 is_unique,
+                index_type: None,
+                column_prefixes: None,
             });
             entry.columns.push(column_name);
         }
@@ -552,6 +554,46 @@ impl DatabaseDriver for PostgresDriver {
     > {
         let pool = self.pool.as_ref().ok_or("No database pool available")?;
         let query_string = format!("SELECT * FROM {}", table_name);
+
+        let stream = async_stream::try_stream! {
+            let mut rows = sqlx::query(&query_string).fetch(pool);
+
+            while let Some(row) = rows.next().await {
+                let row: PgRow = row?;
+                let values = self.map_row_to_universal_values(&row)?;
+                let mut row_map = IndexMap::new();
+                for (col, val) in row.columns().iter().zip(values) {
+                    row_map.insert(col.name().to_string(), val);
+                }
+                yield row_map;
+            }
+        };
+
+        Ok(Box::pin(stream))
+    }
+
+    async fn stream_table_data_ordered(
+        &self,
+        table_name: &str,
+        order_by: &[String],
+    ) -> Result<
+        Pin<
+            Box<
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
+                    + Send
+                    + '_,
+            >,
+        >,
+        Box<dyn Error>,
+    > {
+        let pool = self.pool.as_ref().ok_or("No database pool available")?;
+        let order_clause = if order_by.is_empty() {
+            String::new()
+        } else {
+            let columns = order_by.join(", ");
+            format!(" ORDER BY {}", columns)
+        };
+        let query_string = format!("SELECT * FROM {}{}", table_name, order_clause);
 
         let stream = async_stream::try_stream! {
             let mut rows = sqlx::query(&query_string).fetch(pool);

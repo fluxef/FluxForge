@@ -85,5 +85,9 @@ pub enum Commands {
         // stop data transfer if sql error writing sql data
         #[arg(long)]
         halt_on_error: bool,
+
+        /// Verify data after each table write
+        #[arg(long)]
+        verify: bool,
     },
 }

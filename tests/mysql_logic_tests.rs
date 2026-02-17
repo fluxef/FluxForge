@@ -33,6 +33,8 @@ fn idx(name: &str, cols: &[&str], unique: bool) -> ForgeIndex {
         name: name.to_string(),
         columns: cols.iter().map(|s| s.to_string()).collect(),
         is_unique: unique,
+        index_type: None,
+        column_prefixes: None,
     }
 }
 
@@ -90,6 +92,22 @@ async fn test_build_create_index_and_drop_index_sql() {
     assert_eq!(
         sql_create_u, "CREATE UNIQUE INDEX `u_email` ON `users` (`email`);",
         "build_mysql_create_index_sql failed for unique index"
+    );
+
+    let mut i3 = idx("ft_text", &["content"], false);
+    i3.index_type = Some("FULLTEXT".to_string());
+    let sql_create_ft = drv.build_mysql_create_index_sql("posts", &i3);
+    assert_eq!(
+        sql_create_ft, "CREATE FULLTEXT INDEX `ft_text` ON `posts` (`content`);",
+        "build_mysql_create_index_sql failed for FULLTEXT index"
+    );
+
+    let mut i4 = idx("idx_prefix", &["title"], false);
+    i4.column_prefixes = Some(vec![Some(20)]);
+    let sql_create_prefix = drv.build_mysql_create_index_sql("posts", &i4);
+    assert_eq!(
+        sql_create_prefix, "CREATE INDEX `idx_prefix` ON `posts` (`title`(20));",
+        "build_mysql_create_index_sql failed for prefix length index"
     );
 }
 
@@ -198,11 +216,37 @@ async fn test_field_migration_sql_comprehensive_coverage() {
     c_v.data_type = "char".to_string();
     assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` char(50) NULL DEFAULT NULL");
 
+    // Test binary/varbinary length variations
+    c_v.data_type = "binary".to_string();
+    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` binary(50) NULL DEFAULT NULL");
+
+    c_v.data_type = "varbinary".to_string();
+    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` varbinary(50) NULL DEFAULT NULL");
+
+    // Test datetime/timestamp/time fractional seconds precision
+    c_v.data_type = "datetime".to_string();
+    c_v.length = Some(3);
+    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` datetime(3) NULL DEFAULT NULL");
+
+    c_v.data_type = "timestamp".to_string();
+    c_v.length = Some(6);
+    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` timestamp(6) NULL DEFAULT NULL");
+
+    c_v.data_type = "time".to_string();
+    c_v.length = Some(2);
+    assert_eq!(drv.field_migration_sql(c_v.clone(), &config), "`name` time(2) NULL DEFAULT NULL");
+
     // Test enum variations
     let mut c_e = col("mode", "enum");
     c_e.enum_values = Some(vec!["fast".into(), "slow".into()]);
     c_e.is_nullable = true;
     assert_eq!(drv.field_migration_sql(c_e, &config), "`mode` enum('fast','slow') NULL DEFAULT NULL");
+
+    // Test set variations
+    let mut c_s = col("flags", "set");
+    c_s.enum_values = Some(vec!["red".into(), "green".into(), "blue".into()]);
+    c_s.is_nullable = true;
+    assert_eq!(drv.field_migration_sql(c_s, &config), "`flags` set('red','green','blue') NULL DEFAULT NULL");
 
     // Test NOT NULL variations (no default)
     let mut c_nn = col("id", "int");
@@ -213,7 +257,7 @@ async fn test_field_migration_sql_comprehensive_coverage() {
     let mut c_nul = col("note", "text");
     c_nul.is_nullable = true;
     c_nul.default = None;
-    assert_eq!(drv.field_migration_sql(c_nul, &config), "`note` text NULL DEFAULT NULL");
+    assert_eq!(drv.field_migration_sql(c_nul, &config), "`note` text NULL");
 
     // Test ON UPDATE behavior for non-timestamp (e.g. customized)
     let mut c_upd = col("val", "int");
@@ -228,7 +272,7 @@ async fn test_field_migration_sql_unsigned_matrix() {
     let drv = mk_driver();
     let config = mk_config();
 
-    let types = vec!["int", "integer", "bigint"];
+    let types = vec!["tinyint", "smallint", "mediumint", "int", "integer", "bigint"];
     let unsigned_variants = vec![true, false];
 
     for t in types {

@@ -112,9 +112,16 @@ pub async fn handle_command(
             dry_run,
             verbose,
             halt_on_error,
+            verify,
         } => {
 
             let forge_config = load_config(config.clone())?;
+            let verify_enabled = verify
+                || forge_config
+                    .general
+                    .as_ref()
+                    .and_then(|general| general.verify_after_write)
+                    .unwrap_or(false);
 
             // target database
             let target_driver = drivers::create_driver(&target,&forge_config).await?;
@@ -152,6 +159,7 @@ pub async fn handle_command(
                 dry_run,
                 verbose,
                 halt_on_error,
+                verify_enabled,
             )
             .await?;
 

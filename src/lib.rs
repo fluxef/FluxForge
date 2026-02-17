@@ -48,6 +48,22 @@ pub trait DatabaseDriver: Send + Sync {
         Box<dyn std::error::Error>,
     >;
 
+    /// read ordered data-row stream from source
+    async fn stream_table_data_ordered(
+        &self,
+        table_name: &str,
+        order_by: &[String],
+    ) -> Result<
+        Pin<
+            Box<
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
+                    + Send
+                    + '_,
+            >,
+        >,
+        Box<dyn std::error::Error>,
+    >;
+
     /// write data-row stream into target-db
     async fn insert_chunk(
         &self,

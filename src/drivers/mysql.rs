@@ -179,7 +179,7 @@ impl MySqlDriver {
             }
 
             // extract enum values
-            let enum_values = if mysql_data_type == "enum" {
+            let enum_values = if mysql_data_type == "enum" || mysql_data_type == "set" {
                 Some(self.parse_mysql_enum_values(&mysql_column_type))
             } else {
                 None
@@ -206,6 +206,12 @@ impl MySqlDriver {
 
                     if mysql_data_type.eq_ignore_ascii_case("char")
                         || mysql_data_type.eq_ignore_ascii_case("varchar")
+                        || mysql_data_type.eq_ignore_ascii_case("binary")
+                        || mysql_data_type.eq_ignore_ascii_case("varbinary")
+                        || mysql_data_type.eq_ignore_ascii_case("bit")
+                        || mysql_data_type.eq_ignore_ascii_case("datetime")
+                        || mysql_data_type.eq_ignore_ascii_case("timestamp")
+                        || mysql_data_type.eq_ignore_ascii_case("time")
                     {
                         if let Ok(l) = inside_clean.parse::<u32>() {
                             length = Some(l);
@@ -251,10 +257,20 @@ impl MySqlDriver {
         Ok(columns)
     }
 
-    // extracts 'bla','fasel' from enum('bla','fasel')
+    // extracts 'bla','fasel' from enum('bla','fasel') / set('a','b')
     pub fn parse_mysql_enum_values(&self, col_type: &str) -> Vec<String> {
-        col_type
-            .trim_start_matches("enum(")
+        let trimmed = col_type.trim();
+        let lower = trimmed.to_lowercase();
+        let without_prefix = if lower.starts_with("enum(") || lower.starts_with("set(") {
+            trimmed
+                .splitn(2, '(')
+                .nth(1)
+                .unwrap_or(trimmed)
+        } else {
+            trimmed
+        };
+
+        without_prefix
             .trim_end_matches(')')
             .split(',')
             .map(|v| v.trim_matches('\'').to_string())
@@ -282,6 +298,18 @@ impl MySqlDriver {
 
             let index_name = get_s("Key_name");
             let column_name = get_s("Column_name");
+            let index_type = get_s("Index_type");
+            let seq_in_index = row.try_get::<i64, _>("Seq_in_index").unwrap_or(1);
+            let seq_index = if seq_in_index > 0 {
+                (seq_in_index - 1) as usize
+            } else {
+                0
+            };
+            let sub_part = row
+                .try_get::<Option<i64>, _>("Sub_part")
+                .ok()
+                .flatten()
+                .map(|v| v as u32);
 
             // Non_unique is usually Integer (0 = Unique/PK, 1 = Normal)
             let is_unique = row.try_get::<i64, _>("Non_unique").unwrap_or(1) == 0;
@@ -296,10 +324,28 @@ impl MySqlDriver {
                 name: index_name,
                 columns: Vec::new(),
                 is_unique,
+                index_type: None,
+                column_prefixes: None,
             });
 
-            // add column
-            entry.columns.push(column_name);
+            if entry.index_type.is_none() && !index_type.is_empty() {
+                entry.index_type = Some(index_type);
+            }
+
+            if entry.columns.len() <= seq_index {
+                entry.columns.resize(seq_index + 1, String::new());
+            }
+            entry.columns[seq_index] = column_name;
+
+            if sub_part.is_some() || entry.column_prefixes.is_some() {
+                let prefixes = entry
+                    .column_prefixes
+                    .get_or_insert_with(|| vec![None; entry.columns.len()]);
+                if prefixes.len() < entry.columns.len() {
+                    prefixes.resize(entry.columns.len(), None);
+                }
+                prefixes[seq_index] = sub_part;
+            }
         }
 
         // convert map into Vec
@@ -339,18 +385,18 @@ impl MySqlDriver {
                     ret.push_str(&format!("({})", p));
                 }
             }
-            "int" | "integer" | "bigint" => {
+            "tinyint" | "smallint" | "mediumint" | "int" | "integer" | "bigint" => {
                 if field.is_unsigned {
                     ret.push_str(" unsigned");
                 }
             }
 
-            "varchar" | "char" => {
+            "varchar" | "char" | "binary" | "varbinary" | "bit" | "datetime" | "timestamp" | "time" => {
                 if let Some(l) = field.length {
                     ret.push_str(&format!("({})", l));
                 }
             }
-            "enum" => {
+            "enum" | "set" => {
                 if let Some(ref vals) = field.enum_values {
                     let formatted_vals: Vec<String> =
                         vals.iter().map(|v| format!("'{}'", v)).collect();
@@ -360,22 +406,29 @@ impl MySqlDriver {
             _ => {}
         }
 
+        let sql_type_lower = sql_type.to_lowercase();
+        let skip_default = sql_type_lower.contains("text")
+            || sql_type_lower.contains("blob")
+            || sql_type_lower == "json";
+
         // Nullable & Default NULL
         if !field.is_nullable {
             ret.push_str(" NOT NULL");
         } else {
             ret.push_str(" NULL");
-            if field.default.is_none() {
+            if field.default.is_none() && !skip_default {
                 ret.push_str(" DEFAULT NULL");
             }
         }
 
         // Default Value
         if let Some(ref def) = field.default {
-            if def.to_lowercase() == "current_timestamp" {
-                ret.push_str(" DEFAULT CURRENT_TIMESTAMP");
-            } else {
-                ret.push_str(&format!(" DEFAULT '{}'", def));
+            if !skip_default {
+                if def.to_lowercase() == "current_timestamp" {
+                    ret.push_str(" DEFAULT CURRENT_TIMESTAMP");
+                } else {
+                    ret.push_str(&format!(" DEFAULT '{}'", def));
+                }
             }
         }
 
@@ -606,16 +659,46 @@ impl MySqlDriver {
 
     /// builds CREATE INDEX Statement
     pub fn build_mysql_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
-        let unique = if index.is_unique { "UNIQUE " } else { "" };
+        let index_type = index
+            .index_type
+            .as_deref()
+            .unwrap_or("")
+            .to_uppercase();
+        let is_fulltext = index_type == "FULLTEXT";
+        let is_spatial = index_type == "SPATIAL";
+        let type_prefix = if is_fulltext {
+            "FULLTEXT "
+        } else if is_spatial {
+            "SPATIAL "
+        } else {
+            ""
+        };
+        let unique = if index.is_unique && !is_fulltext && !is_spatial {
+            "UNIQUE "
+        } else {
+            ""
+        };
         let cols = index
             .columns
             .iter()
-            .map(|c| format!("`{}`", c))
+            .enumerate()
+            .map(|(i, c)| {
+                let prefix = index
+                    .column_prefixes
+                    .as_ref()
+                    .and_then(|p| p.get(i))
+                    .and_then(|v| *v);
+                if let Some(len) = prefix {
+                    format!("`{}`({})", c, len)
+                } else {
+                    format!("`{}`", c)
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "CREATE {}INDEX `{}` ON `{}` ({});",
-            unique, index.name, table_name, cols
+            "CREATE {}{}INDEX `{}` ON `{}` ({});",
+            unique, type_prefix, index.name, table_name, cols
         )
     }
 
@@ -629,11 +712,33 @@ impl MySqlDriver {
         if a.is_unique != b.is_unique {
             return false;
         }
+        if !a
+            .index_type
+            .as_deref()
+            .unwrap_or("")
+            .eq_ignore_ascii_case(b.index_type.as_deref().unwrap_or(""))
+        {
+            return false;
+        }
         if a.columns.len() != b.columns.len() {
+            return false;
+        }
+        let a_prefixes = a
+            .column_prefixes
+            .clone()
+            .unwrap_or_else(|| vec![None; a.columns.len()]);
+        let b_prefixes = b
+            .column_prefixes
+            .clone()
+            .unwrap_or_else(|| vec![None; b.columns.len()]);
+        if a_prefixes.len() != b_prefixes.len() {
             return false;
         }
         for (i, col) in a.columns.iter().enumerate() {
             if b.columns.get(i) != Some(col) {
+                return false;
+            }
+            if a_prefixes.get(i) != b_prefixes.get(i) {
                 return false;
             }
         }
@@ -736,7 +841,21 @@ impl MySqlDriver {
                         row.try_get::<chrono::NaiveTime, _>(i).map_err(to_err)?,
                     ),
 
-                    "YEAR" => ForgeUniversalValue::Year(row.try_get::<i32, _>(i).map_err(to_err)?),
+                    "YEAR" => {
+                        let year = match row.try_get::<u16, _>(i) {
+                            Ok(val) => val as i32,
+                            Err(_) => match row.try_get::<i16, _>(i) {
+                                Ok(val) => val as i32,
+                                Err(_) => {
+                                    let raw = row.try_get::<String, _>(i).map_err(to_err)?;
+                                    raw.parse::<i32>().map_err(|_| {
+                                        to_err(sqlx::Error::Decode("Invalid YEAR value".into()))
+                                    })?
+                                }
+                            },
+                        };
+                        ForgeUniversalValue::Year(year)
+                    }
 
                     "TINYINT(1)" | "BOOLEAN" | "BOOL" => {
                         ForgeUniversalValue::Boolean(row.try_get::<bool, _>(i).map_err(to_err)?)
@@ -771,9 +890,15 @@ impl MySqlDriver {
                     "BLOB" | "VARBINARY" | "BINARY" => {
                         ForgeUniversalValue::Binary(row.try_get::<Vec<u8>, _>(i).map_err(to_err)?)
                     }
+                    "BIT" => {
+                        ForgeUniversalValue::UnsignedInteger(
+                            row.try_get::<u64, _>(i).map_err(to_err)?,
+                        )
+                    }
 
                     // String-Fallback for VARCHAR, TEXT etc.
-                    "VARCHAR" | "TEXT" | "ENUM" | "SET" => {
+                    "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT"
+                    | "ENUM" | "SET" => {
                         ForgeUniversalValue::Text(row.try_get::<String, _>(i).map_err(to_err)?)
                     }
 
@@ -920,6 +1045,52 @@ impl DatabaseDriver for MySqlDriver {
         Box<dyn std::error::Error>,
     > {
         let query_string = format!("SELECT * FROM `{}`", table_name);
+
+        let stream = async_stream::try_stream! {
+            let mut rows = sqlx::query(&query_string).fetch(&self.pool);
+
+            while let Some(row) = rows.next().await {
+                let row: sqlx::mysql::MySqlRow = row?;
+                let values = self.map_row_to_universal_values(&row)?;
+
+                let mut row_map = IndexMap::new();
+                for (col, val) in row.columns().iter().zip(values) {
+                    row_map.insert(col.name().to_string(), val);
+                }
+
+                yield row_map;
+            }
+        };
+
+        Ok(Box::pin(stream))
+    }
+
+    async fn stream_table_data_ordered(
+        &self,
+        table_name: &str,
+        order_by: &[String],
+    ) -> Result<
+        Pin<
+            Box<
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
+                    + Send
+                    + '_,
+            >,
+        >,
+        Box<dyn std::error::Error>,
+    > {
+        let order_clause = if order_by.is_empty() {
+            String::new()
+        } else {
+            let columns = order_by
+                .iter()
+                .map(|col| format!("`{}`", col))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(" ORDER BY {}", columns)
+        };
+
+        let query_string = format!("SELECT * FROM `{}`{}", table_name, order_clause);
 
         let stream = async_stream::try_stream! {
             let mut rows = sqlx::query(&query_string).fetch(&self.pool);

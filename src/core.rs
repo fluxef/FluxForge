@@ -73,6 +73,7 @@ pub struct ForgeRuleGeneralConfig {
 pub struct ForgeGeneralConfig {
     pub on_missing_type: Option<String>,
     pub default_charset: Option<String>,
+    pub verify_after_write: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -159,6 +160,8 @@ pub struct ForgeIndex {
     pub name: String,
     pub columns: Vec<String>,
     pub is_unique: bool,
+    pub index_type: Option<String>,
+    pub column_prefixes: Option<Vec<Option<u32>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

@@ -1,3 +1,11 @@
+//! Database operations for replication, verification, and dependency resolution.
+//!
+//! This module provides high-level operations for:
+//! - Data replication between databases
+//! - Schema dependency analysis and topological sorting
+//! - Data verification after replication
+//! - Error logging for failed operations
+
 use crate::{DatabaseDriver, ForgeSchema, ForgeTable, ForgeUniversalValue};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -133,6 +141,54 @@ async fn verify_table_data(
     Ok(())
 }
 
+/// Replicates data from source to target database with optional verification.
+///
+/// Streams data from the source database and inserts it into the target database
+/// in chunks of 1000 rows. Optionally verifies that all data was correctly replicated
+/// by comparing source and target row-by-row.
+///
+/// # Arguments
+///
+/// * `source` - Source database driver
+/// * `target` - Target database driver
+/// * `schema` - Schema defining tables to replicate
+/// * `dry_run` - If true, prints SQL without executing
+/// * `_verbose` - Verbose output (currently unused)
+/// * `halt_on_error` - If true, stops on first error; if false, logs and continues
+/// * `verify_after_write` - If true, verifies data after each table is replicated
+///
+/// # Examples
+///
+/// ```no_run
+/// use fluxforge::{ops, drivers, core::ForgeConfig};
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = ForgeConfig::default();
+/// let source = drivers::create_driver("mysql://user:pass@localhost/source", &config).await?;
+/// let target = drivers::create_driver("postgres://user:pass@localhost/target", &config).await?;
+/// let schema = source.fetch_schema(&config).await?;
+///
+/// ops::replicate_data(
+///     source.as_ref(),
+///     target.as_ref(),
+///     &schema,
+///     false, // dry_run
+///     false, // verbose
+///     true,  // halt_on_error
+///     true   // verify_after_write
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Database connection fails
+/// - Data cannot be read from source
+/// - Data cannot be written to target
+/// - Verification fails (data mismatch)
+/// - `halt_on_error` is true and any insert fails
 pub async fn replicate_data(
     source: &dyn DatabaseDriver,
     target: &dyn DatabaseDriver,
@@ -197,6 +253,35 @@ pub async fn replicate_data(
     Ok(())
 }
 
+/// Sorts tables by foreign key dependencies using topological sort.
+///
+/// Ensures that tables are ordered such that referenced tables come before
+/// tables that reference them. This is essential for correct data insertion
+/// order when foreign key constraints are present.
+///
+/// # Arguments
+///
+/// * `schema` - Schema containing tables with foreign key relationships
+///
+/// # Examples
+///
+/// ```no_run
+/// use fluxforge::{ops, core::ForgeSchema};
+///
+/// # fn example(schema: &ForgeSchema) -> Result<(), String> {
+/// let sorted_tables = ops::sort_tables_by_dependencies(schema)?;
+/// for table in sorted_tables {
+///     println!("Table: {}", table.name);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Circular dependencies are detected (tables reference each other in a cycle)
+/// - A foreign key references a non-existent table
 pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTable>, String> {
     let mut graph = DiGraph::<&str, ()>::new();
     let mut nodes = HashMap::new();
@@ -242,7 +327,33 @@ pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTabl
     }
 }
 
-/// write database data errors into logfile
+/// Logs database data errors to a file.
+///
+/// Appends error information to `migration_errors.log` in the current directory.
+/// Used when `halt_on_error` is false to record failed row insertions without
+/// stopping the entire replication process.
+///
+/// # Arguments
+///
+/// * `table` - Name of the table where the error occurred
+/// * `row_data` - String representation of the row data that failed
+/// * `error_msg` - Error message describing the failure
+///
+/// # Examples
+///
+/// ```no_run
+/// use fluxforge::ops::log_error_to_file;
+///
+/// log_error_to_file(
+///     "users",
+///     &"id: 1, name: 'Alice'".to_string(),
+///     "Duplicate key violation"
+/// );
+/// ```
+///
+/// # Panics
+///
+/// Panics if the log file cannot be opened or written to.
 pub fn log_error_to_file(table: &str, row_data: &String, error_msg: &str) {
     let mut file = OpenOptions::new()
         .create(true)

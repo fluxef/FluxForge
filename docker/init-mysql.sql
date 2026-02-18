@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS fasel
     PRIMARY KEY (id_primary),
     INDEX idx_varchar (t_varchar(20)),
     UNIQUE INDEX uq_char (t_char),
+    UNIQUE KEY `uk_three_fields` (`id_primary`,`t_char`,`t_varchar`),
     FULLTEXT INDEX ft_text (t_text)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;

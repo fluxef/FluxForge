@@ -85,7 +85,7 @@ impl MySqlDriver {
         Ok(tables)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn map_mysql_type(
         &self,
         mysql_column_type: &str,
@@ -108,13 +108,13 @@ impl MySqlDriver {
         // if unsigned rule is set we convert to bigint and dont set is_unsigned (would be obsolete/confusing with bigint)
         if let Some(mysql_cfg) = &config.mysql
             && let Some(rules) = &mysql_cfg.rules
-                && let Some(on_read) = &rules.on_read
-                    && on_read.unsigned_int_to_bigint.unwrap_or(false)
-                        && is_unsigned
-                        && mysql_data_type_lower.contains("int")
-                    {
-                        target_type = "bigint".to_string();
-                    }
+            && let Some(on_read) = &rules.on_read
+            && on_read.unsigned_int_to_bigint.unwrap_or(false)
+            && is_unsigned
+            && mysql_data_type_lower.contains("int")
+        {
+            target_type = "bigint".to_string();
+        }
 
         target_type
     }
@@ -198,36 +198,39 @@ impl MySqlDriver {
             let mut scale: Option<u32> = None;
 
             if let Some(start) = mysql_column_type.find('(')
-                && let Some(end_rel) = mysql_column_type[start + 1..].find(')') {
-                    let inside = &mysql_column_type[start + 1..start + 1 + end_rel];
-                    let inside_clean = inside.replace(' ', "");
+                && let Some(end_rel) = mysql_column_type[start + 1..].find(')')
+            {
+                let inside = &mysql_column_type[start + 1..start + 1 + end_rel];
+                let inside_clean = inside.replace(' ', "");
 
-                    if mysql_data_type.eq_ignore_ascii_case("char")
-                        || mysql_data_type.eq_ignore_ascii_case("varchar")
-                        || mysql_data_type.eq_ignore_ascii_case("binary")
-                        || mysql_data_type.eq_ignore_ascii_case("varbinary")
-                        || mysql_data_type.eq_ignore_ascii_case("bit")
-                        || mysql_data_type.eq_ignore_ascii_case("datetime")
-                        || mysql_data_type.eq_ignore_ascii_case("timestamp")
-                        || mysql_data_type.eq_ignore_ascii_case("time")
+                if mysql_data_type.eq_ignore_ascii_case("char")
+                    || mysql_data_type.eq_ignore_ascii_case("varchar")
+                    || mysql_data_type.eq_ignore_ascii_case("binary")
+                    || mysql_data_type.eq_ignore_ascii_case("varbinary")
+                    || mysql_data_type.eq_ignore_ascii_case("bit")
+                    || mysql_data_type.eq_ignore_ascii_case("datetime")
+                    || mysql_data_type.eq_ignore_ascii_case("timestamp")
+                    || mysql_data_type.eq_ignore_ascii_case("time")
+                {
+                    if let Ok(l) = inside_clean.parse::<u32>() {
+                        length = Some(l);
+                    }
+                } else if mysql_data_type.eq_ignore_ascii_case("float")
+                    || mysql_data_type.eq_ignore_ascii_case("decimal")
+                {
+                    let parts: Vec<&str> = inside_clean.split(',').collect();
+                    if let Some(p0) = parts.first()
+                        && let Ok(p) = p0.parse::<u32>()
                     {
-                        if let Ok(l) = inside_clean.parse::<u32>() {
-                            length = Some(l);
-                        }
-                    } else if mysql_data_type.eq_ignore_ascii_case("float")
-                        || mysql_data_type.eq_ignore_ascii_case("decimal")
+                        precision = Some(p);
+                    }
+                    if let Some(p1) = parts.get(1)
+                        && let Ok(s) = p1.parse::<u32>()
                     {
-                        let parts: Vec<&str> = inside_clean.split(',').collect();
-                        if let Some(p0) = parts.first()
-                            && let Ok(p) = p0.parse::<u32>() {
-                                precision = Some(p);
-                            }
-                        if let Some(p1) = parts.get(1)
-                            && let Ok(s) = p1.parse::<u32>() {
-                                scale = Some(s);
-                            }
+                        scale = Some(s);
                     }
                 }
+            }
 
             columns.push(ForgeColumn {
                 name: col_name,
@@ -253,7 +256,7 @@ impl MySqlDriver {
     }
 
     // extracts 'bla','fasel' from enum('bla','fasel') / set('a','b')
-    #[must_use] 
+    #[must_use]
     pub fn parse_mysql_enum_values(&self, col_type: &str) -> Vec<String> {
         let trimmed = col_type.trim();
         let lower = trimmed.to_lowercase();
@@ -292,12 +295,14 @@ impl MySqlDriver {
             let index_name = get_s("Key_name");
             let column_name = get_s("Column_name");
             let index_type = get_s("Index_type");
-            let seq_in_index = row.try_get::<i64, _>("Seq_in_index").unwrap_or(1);
+            let seq_in_index = row.try_get::<u32, _>("Seq_in_index").unwrap_or(1);
+
             let seq_index = if seq_in_index > 0 {
                 (seq_in_index - 1) as usize
             } else {
                 0
             };
+
             let sub_part = row
                 .try_get::<Option<i64>, _>("Sub_part")
                 .ok()
@@ -353,7 +358,7 @@ impl MySqlDriver {
         Ok(Vec::new())
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn field_migration_sql(&self, field: ForgeColumn, config: &ForgeConfig) -> String {
         let target_types = config.get_type_list("mysql", "on_write");
 
@@ -418,13 +423,14 @@ impl MySqlDriver {
 
         // Default Value
         if let Some(ref def) = field.default
-            && !skip_default {
-                if def.to_lowercase() == "current_timestamp" {
-                    ret.push_str(" DEFAULT CURRENT_TIMESTAMP");
-                } else {
-                    ret.push_str(&format!(" DEFAULT '{def}'"));
-                }
+            && !skip_default
+        {
+            if def.to_lowercase() == "current_timestamp" {
+                ret.push_str(" DEFAULT CURRENT_TIMESTAMP");
+            } else {
+                ret.push_str(&format!(" DEFAULT '{def}'"));
             }
+        }
 
         // Auto Increment
         if field.auto_increment {
@@ -433,19 +439,20 @@ impl MySqlDriver {
 
         // On Update
         if let Some(ref on_upd) = field.on_update
-            && let Some(ref def) = field.default {
-                if def.to_lowercase() == "current_timestamp" {
-                    ret.push_str(" ON UPDATE CURRENT_TIMESTAMP");
-                } else {
-                    ret.push_str(&format!(" ON UPDATE {on_upd}"));
-                }
+            && let Some(ref def) = field.default
+        {
+            if def.to_lowercase() == "current_timestamp" {
+                ret.push_str(" ON UPDATE CURRENT_TIMESTAMP");
+            } else {
+                ret.push_str(&format!(" ON UPDATE {on_upd}"));
             }
+        }
 
         ret
     }
 
     /// builds CREATE TABLE Statement for `MySQL`
-    #[must_use] 
+    #[must_use]
     pub fn build_mysql_create_table_sql(&self, table: &ForgeTable, config: &ForgeConfig) -> String {
         let mut col_defs = Vec::new();
         let mut pks = Vec::new();
@@ -591,7 +598,7 @@ impl MySqlDriver {
         Ok(all_statements)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn add_column_migration(
         &self,
         table_name: &str,
@@ -601,12 +608,12 @@ impl MySqlDriver {
         self.build_mysql_add_column_sql(table_name, src_col, config)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn drop_column_migration(&self, table_name: &str, col_name: &str) -> String {
         format!("ALTER TABLE `{table_name}` DROP COLUMN `{col_name}`;")
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn modify_column_migration(
         &self,
         table_name: &str,
@@ -644,7 +651,7 @@ impl MySqlDriver {
     }
 
     /// builds ALTER TABLE ADD COLUMN Statement
-    #[must_use] 
+    #[must_use]
     pub fn build_mysql_add_column_sql(
         &self,
         table_name: &str,
@@ -656,7 +663,7 @@ impl MySqlDriver {
     }
 
     /// builds CREATE INDEX Statement
-    #[must_use] 
+    #[must_use]
     pub fn build_mysql_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
         let index_type = index.index_type.as_deref().unwrap_or("").to_uppercase();
         let is_fulltext = index_type == "FULLTEXT";
@@ -698,13 +705,13 @@ impl MySqlDriver {
     }
 
     /// builds DROP INDEX Statement
-    #[must_use] 
+    #[must_use]
     pub fn build_mysql_drop_index_sql(&self, table_name: &str, index_name: &str) -> String {
         format!("DROP INDEX `{index_name}` ON `{table_name}`;")
     }
 
     /// comparison if two indexes are identical (without names, thats already checked via map-key)
-    #[must_use] 
+    #[must_use]
     pub fn indices_equal(&self, a: &ForgeIndex, b: &ForgeIndex) -> bool {
         if a.is_unique != b.is_unique {
             return false;
@@ -837,12 +844,16 @@ impl MySqlDriver {
                     "YEAR" => {
                         let year = match row.try_get::<u16, _>(i) {
                             Ok(val) => i32::from(val),
-                            Err(_) => if let Ok(val) = row.try_get::<i16, _>(i) { i32::from(val) } else {
-                                let raw = row.try_get::<String, _>(i).map_err(to_err)?;
-                                raw.parse::<i32>().map_err(|_| {
-                                    to_err(sqlx::Error::Decode("Invalid YEAR value".into()))
-                                })?
-                            },
+                            Err(_) => {
+                                if let Ok(val) = row.try_get::<i16, _>(i) {
+                                    i32::from(val)
+                                } else {
+                                    let raw = row.try_get::<String, _>(i).map_err(to_err)?;
+                                    raw.parse::<i32>().map_err(|_| {
+                                        to_err(sqlx::Error::Decode("Invalid YEAR value".into()))
+                                    })?
+                                }
+                            }
                         };
                         ForgeUniversalValue::Year(year)
                     }

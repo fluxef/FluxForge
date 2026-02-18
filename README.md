@@ -28,7 +28,7 @@ Add FluxForge to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fluxforge = "0.2.0"
+fluxforge = "0.3.0"
 ```
 
 ### As a Standalone Binary

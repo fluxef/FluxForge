@@ -438,14 +438,8 @@ impl MySqlDriver {
         }
 
         // On Update
-        if let Some(ref on_upd) = field.on_update
-            && let Some(ref def) = field.default
-        {
-            if def.to_lowercase() == "current_timestamp" {
-                ret.push_str(" ON UPDATE CURRENT_TIMESTAMP");
-            } else {
-                ret.push_str(&format!(" ON UPDATE {on_upd}"));
-            }
+        if let Some(ref on_upd) = field.on_update {
+            ret.push_str(&format!(" ON UPDATE {on_upd}"));
         }
 
         ret

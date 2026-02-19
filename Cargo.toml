@@ -1,6 +1,6 @@
 [package]
 name = "fluxforge"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Andreas Frackowiak <af@ins.de>"]
 edition = "2024"
 rust-version = "1.92"

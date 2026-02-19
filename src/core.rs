@@ -39,7 +39,7 @@ pub struct ForgeConfig {
     /// Global transformation rules
     pub rules: Option<ForgeRulesConfig>,
     /// Table-specific overrides and renames
-    pub tables: Option<ForgeTableConfig>,
+    pub tables: Option<ForgeSchemaTableConfig>,
 }
 
 impl ForgeConfig {
@@ -126,7 +126,7 @@ pub struct ForgeRulesConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ForgeTableConfig {
+pub struct ForgeSchemaTableConfig {
     pub renames: Option<HashMap<String, String>>,
     pub column_overrides: Option<HashMap<String, HashMap<String, String>>>,
 }
@@ -149,9 +149,9 @@ pub struct ForgeTableConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ForgeSchema {
     /// Metadata about the source database and extraction
-    pub metadata: ForgeMetadata,
+    pub metadata: ForgeSchemaMetadata,
     /// List of all tables in the schema
-    pub tables: Vec<ForgeTable>,
+    pub tables: Vec<ForgeSchemaTable>,
 }
 
 impl ForgeSchema {
@@ -175,7 +175,7 @@ impl ForgeSchema {
 ///
 /// Tracks the source database, extraction time, and configuration used.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct ForgeMetadata {
+pub struct ForgeSchemaMetadata {
     /// Source database type ("mysql" or "postgres")
     pub source_system: String,
     /// Name of the source database
@@ -193,34 +193,34 @@ pub struct ForgeMetadata {
 /// # Examples
 ///
 /// ```
-/// use fluxforge::core::ForgeTable;
+/// use fluxforge::core::ForgeSchemaTable;
 ///
-/// let table = ForgeTable::new("users");
+/// let table = ForgeSchemaTable::new("users");
 /// assert_eq!(table.name, "users");
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct ForgeTable {
+pub struct ForgeSchemaTable {
     /// Table name
     pub name: String,
     /// List of columns in the table
-    pub columns: Vec<ForgeColumn>,
+    pub columns: Vec<ForgeSchemaColumn>,
     /// List of indices defined on the table
-    pub indices: Vec<ForgeIndex>,
+    pub indices: Vec<ForgeSchemaIndex>,
     /// List of foreign key constraints
-    pub foreign_keys: Vec<ForgeForeignKey>,
+    pub foreign_keys: Vec<ForgeSchemaForeignKey>,
     /// Optional table comment
     pub comment: Option<String>,
 }
 
-impl ForgeTable {
+impl ForgeSchemaTable {
     /// Creates a new table with the given name.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fluxforge::core::ForgeTable;
+    /// use fluxforge::core::ForgeSchemaTable;
     ///
-    /// let table = ForgeTable::new("products");
+    /// let table = ForgeSchemaTable::new("products");
     /// assert_eq!(table.name, "products");
     /// assert_eq!(table.columns.len(), 0);
     /// ```
@@ -238,14 +238,14 @@ impl ForgeTable {
 /// # Examples
 ///
 /// ```
-/// use fluxforge::core::ForgeColumn;
+/// use fluxforge::core::ForgeSchemaColumn;
 ///
-/// let mut col = ForgeColumn::new("id", "integer");
+/// let mut col = ForgeSchemaColumn::new("id", "integer");
 /// col.is_primary_key = true;
 /// col.auto_increment = true;
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct ForgeColumn {
+pub struct ForgeSchemaColumn {
     /// Column name
     pub name: String,
     /// Data type (mapped according to configuration)
@@ -274,15 +274,15 @@ pub struct ForgeColumn {
     pub enum_values: Option<Vec<String>>,
 }
 
-impl ForgeColumn {
+impl ForgeSchemaColumn {
     /// Creates a new column with the given name and data type.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fluxforge::core::ForgeColumn;
+    /// use fluxforge::core::ForgeSchemaColumn;
     ///
-    /// let col = ForgeColumn::new("email", "varchar");
+    /// let col = ForgeSchemaColumn::new("email", "varchar");
     /// assert_eq!(col.name, "email");
     /// assert_eq!(col.data_type, "varchar");
     /// ```
@@ -298,7 +298,7 @@ impl ForgeColumn {
 
 /// Represents a database index.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct ForgeIndex {
+pub struct ForgeSchemaIndex {
     /// Index name
     pub name: String,
     /// Columns included in the index
@@ -313,7 +313,7 @@ pub struct ForgeIndex {
 
 /// Represents a foreign key constraint.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct ForgeForeignKey {
+pub struct ForgeSchemaForeignKey {
     /// Constraint name
     pub name: String,
     /// Column in this table
@@ -338,14 +338,14 @@ pub struct ForgeForeignKey {
 /// # Examples
 ///
 /// ```
-/// use fluxforge::core::ForgeUniversalValue;
+/// use fluxforge::core::ForgeUniversalDataField;
 ///
-/// let int_val = ForgeUniversalValue::Integer(42);
-/// let text_val = ForgeUniversalValue::Text("hello".to_string());
-/// let null_val = ForgeUniversalValue::Null;
+/// let int_val = ForgeUniversalDataField::Integer(42);
+/// let text_val = ForgeUniversalDataField::Text("hello".to_string());
+/// let null_val = ForgeUniversalDataField::Null;
 /// ```
 #[derive(Debug, Clone)]
-pub enum ForgeUniversalValue {
+pub enum ForgeUniversalDataField {
     /// Signed 64-bit integer
     Integer(i64),
     /// Unsigned 64-bit integer
@@ -378,6 +378,11 @@ pub enum ForgeUniversalValue {
     Null,
     /// MySQL zero datetime (0000-00-00 00:00:00)
     ZeroDateTime,
+}
+
+/// Represents a Database row with Universal Data columns
+pub struct ForgeUniversalDataRow {
+    pub columns: Vec<ForgeUniversalDataField>,
 }
 
 /// Error types for FluxForge operations.

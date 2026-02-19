@@ -36,7 +36,7 @@ fluxforge = "0.3.0"
 Install via cargo:
 
 ```bash
-cargo install fluxforge
+cargo add fluxforge
 ```
 
 ## Usage
@@ -134,6 +134,7 @@ fluxforge replicate \
   --target "postgres://user:pass@localhost/target_db" \
   --config mapping.toml \
   --verify \
+  --halt-on-error \
   --verbose
 ```
 

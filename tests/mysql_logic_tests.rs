@@ -6,8 +6,8 @@
 )]
 
 use fluxforge::core::{
-    ForgeColumn, ForgeConfig, ForgeDbConfig, ForgeIndex, ForgeRuleGeneralConfig,
-    ForgeRulesDirectionConfig, ForgeTable, ForgeTypeDirectionConfig,
+    ForgeConfig, ForgeDbConfig, ForgeRuleGeneralConfig, ForgeRulesDirectionConfig,
+    ForgeSchemaColumn, ForgeSchemaIndex, ForgeSchemaTable, ForgeTypeDirectionConfig,
 };
 use fluxforge::drivers::MySqlDriver;
 use std::collections::HashMap;
@@ -30,16 +30,16 @@ fn mk_config() -> ForgeConfig {
     ForgeConfig::default()
 }
 
-fn col(name: &str, data_type: &str) -> ForgeColumn {
-    ForgeColumn {
+fn col(name: &str, data_type: &str) -> ForgeSchemaColumn {
+    ForgeSchemaColumn {
         name: name.to_string(),
         data_type: data_type.to_string(),
         ..Default::default()
     }
 }
 
-fn idx(name: &str, cols: &[&str], unique: bool) -> ForgeIndex {
-    ForgeIndex {
+fn idx(name: &str, cols: &[&str], unique: bool) -> ForgeSchemaIndex {
+    ForgeSchemaIndex {
         name: name.to_string(),
         columns: cols.iter().map(std::string::ToString::to_string).collect(),
         is_unique: unique,
@@ -378,7 +378,7 @@ async fn test_field_migration_sql_unsigned_matrix() {
 #[tokio::test]
 async fn test_build_mysql_create_table_sql_with_pk() {
     let drv = mk_driver();
-    let mut t = ForgeTable::new("users");
+    let mut t = ForgeSchemaTable::new("users");
 
     let mut id = col("id", "int");
     id.is_primary_key = true;
@@ -491,7 +491,7 @@ async fn test_modify_column_migration_float_default_comparison() {
 #[tokio::test]
 async fn test_create_and_delete_table_migration_sql_and_indices() {
     let drv = mk_driver();
-    let mut t = ForgeTable::new("users");
+    let mut t = ForgeSchemaTable::new("users");
     let mut id = col("id", "int");
     id.is_primary_key = true;
     id.is_nullable = false;
@@ -531,7 +531,7 @@ async fn test_alter_table_migration_sql_columns_and_indices() {
     let drv = mk_driver();
 
     // src_table: source database with desired state
-    let mut src = ForgeTable::new("users");
+    let mut src = ForgeSchemaTable::new("users");
     let mut src_id = col("id", "int");
     src_id.is_nullable = true; // force a MODIFY to NOT NULL in desired state
     src.columns.push(src_id);
@@ -539,7 +539,7 @@ async fn test_alter_table_migration_sql_columns_and_indices() {
     src.indices.push(idx("idx_old", &["legacy"], false));
 
     // dst_table: target table (actual state)
-    let mut dst = ForgeTable::new("users");
+    let mut dst = ForgeSchemaTable::new("users");
     let mut id = col("id", "int");
     id.is_nullable = false;
     dst.columns.push(id); // same name, but enforces NOT NULL via modify

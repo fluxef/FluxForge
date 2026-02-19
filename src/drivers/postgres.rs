@@ -1,9 +1,9 @@
 use crate::core::{
-    ForgeConfig, ForgeError, ForgeForeignKey, ForgeIndex, ForgeMetadata, ForgeSchema, ForgeTable,
-    ForgeUniversalValue,
+    ForgeConfig, ForgeError, ForgeSchema, ForgeSchemaForeignKey, ForgeSchemaIndex,
+    ForgeSchemaMetadata, ForgeSchemaTable, ForgeUniversalDataField,
 };
 use crate::ops::log_error_to_file;
-use crate::{DatabaseDriver, ForgeColumn};
+use crate::{DatabaseDriver, ForgeSchemaColumn};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
@@ -21,29 +21,29 @@ impl PostgresDriver {
     pub fn bind_universal<'q>(
         &self,
         query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
-        val: &'q ForgeUniversalValue,
+        val: &'q ForgeUniversalDataField,
     ) -> sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments> {
         match val {
-            ForgeUniversalValue::Integer(i) => query.bind(i),
-            ForgeUniversalValue::UnsignedInteger(u) => query.bind(*u as i64), // Postgres lacks unsigned
-            ForgeUniversalValue::Float(f) => query.bind(f),
-            ForgeUniversalValue::Text(s) => query.bind(s),
-            ForgeUniversalValue::Binary(bin) => query.bind(bin),
-            ForgeUniversalValue::Boolean(b) => query.bind(b),
-            ForgeUniversalValue::Year(y) => query.bind(y),
-            ForgeUniversalValue::Time(t) => query.bind(t),
-            ForgeUniversalValue::Date(d) => query.bind(d),
-            ForgeUniversalValue::DateTime(dt) => query.bind(dt),
-            ForgeUniversalValue::Decimal(d) => query.bind(d),
-            ForgeUniversalValue::Json(j) => query.bind(j),
-            ForgeUniversalValue::Uuid(u) => query.bind(u),
-            ForgeUniversalValue::Inet(i) => query.bind(i),
-            ForgeUniversalValue::Null => query.bind(None::<String>),
-            ForgeUniversalValue::ZeroDateTime => query.bind(None::<String>), // Postgres doesn't support 0000-00-00
+            ForgeUniversalDataField::Integer(i) => query.bind(i),
+            ForgeUniversalDataField::UnsignedInteger(u) => query.bind(*u as i64), // Postgres lacks unsigned
+            ForgeUniversalDataField::Float(f) => query.bind(f),
+            ForgeUniversalDataField::Text(s) => query.bind(s),
+            ForgeUniversalDataField::Binary(bin) => query.bind(bin),
+            ForgeUniversalDataField::Boolean(b) => query.bind(b),
+            ForgeUniversalDataField::Year(y) => query.bind(y),
+            ForgeUniversalDataField::Time(t) => query.bind(t),
+            ForgeUniversalDataField::Date(d) => query.bind(d),
+            ForgeUniversalDataField::DateTime(dt) => query.bind(dt),
+            ForgeUniversalDataField::Decimal(d) => query.bind(d),
+            ForgeUniversalDataField::Json(j) => query.bind(j),
+            ForgeUniversalDataField::Uuid(u) => query.bind(u),
+            ForgeUniversalDataField::Inet(i) => query.bind(i),
+            ForgeUniversalDataField::Null => query.bind(None::<String>),
+            ForgeUniversalDataField::ZeroDateTime => query.bind(None::<String>), // Postgres doesn't support 0000-00-00
         }
     }
 
-    pub async fn fetch_tables(&self) -> Result<Vec<ForgeTable>, Box<dyn Error>> {
+    pub async fn fetch_tables(&self) -> Result<Vec<ForgeSchemaTable>, Box<dyn Error>> {
         let pool = self.pool.as_ref().ok_or("No database pool available")?;
         let rows = sqlx::query(
             "SELECT table_name, NULL as table_comment 
@@ -56,7 +56,7 @@ impl PostgresDriver {
         let mut tables = Vec::new();
         for row in rows {
             let table_name: String = row.get(0);
-            tables.push(ForgeTable {
+            tables.push(ForgeSchemaTable {
                 name: table_name,
                 columns: Vec::new(),
                 indices: Vec::new(),
@@ -82,7 +82,7 @@ impl PostgresDriver {
         &self,
         table_name: &str,
         config: &ForgeConfig,
-    ) -> Result<Vec<ForgeColumn>, Box<dyn Error>> {
+    ) -> Result<Vec<ForgeSchemaColumn>, Box<dyn Error>> {
         let pool = self.pool.as_ref().ok_or("No database pool available")?;
         let sql = "
             SELECT 
@@ -126,7 +126,7 @@ impl PostgresDriver {
             let is_nullable: String = row.get("is_nullable");
             let default: Option<String> = row.get("column_default");
 
-            columns.push(ForgeColumn {
+            columns.push(ForgeSchemaColumn {
                 name,
                 data_type: mapped_type,
                 length: length.map(|l| l as u32),
@@ -146,7 +146,10 @@ impl PostgresDriver {
         Ok(columns)
     }
 
-    pub async fn fetch_indices(&self, table_name: &str) -> Result<Vec<ForgeIndex>, Box<dyn Error>> {
+    pub async fn fetch_indices(
+        &self,
+        table_name: &str,
+    ) -> Result<Vec<ForgeSchemaIndex>, Box<dyn Error>> {
         let pool = self.pool.as_ref().ok_or("No database pool available")?;
         let sql = "
             SELECT
@@ -172,20 +175,22 @@ impl PostgresDriver {
 
         let rows = sqlx::query(sql).bind(table_name).fetch_all(pool).await?;
 
-        let mut indices_map: IndexMap<String, ForgeIndex> = IndexMap::new();
+        let mut indices_map: IndexMap<String, ForgeSchemaIndex> = IndexMap::new();
 
         for row in rows {
             let index_name: String = row.get("index_name");
             let column_name: String = row.get("column_name");
             let is_unique: bool = row.get("is_unique");
 
-            let entry = indices_map.entry(index_name.clone()).or_insert(ForgeIndex {
-                name: index_name,
-                columns: Vec::new(),
-                is_unique,
-                index_type: None,
-                column_prefixes: None,
-            });
+            let entry = indices_map
+                .entry(index_name.clone())
+                .or_insert(ForgeSchemaIndex {
+                    name: index_name,
+                    columns: Vec::new(),
+                    is_unique,
+                    index_type: None,
+                    column_prefixes: None,
+                });
             entry.columns.push(column_name);
         }
 
@@ -195,7 +200,7 @@ impl PostgresDriver {
     pub async fn fetch_foreign_keys(
         &self,
         table_name: &str,
-    ) -> Result<Vec<ForgeForeignKey>, Box<dyn Error>> {
+    ) -> Result<Vec<ForgeSchemaForeignKey>, Box<dyn Error>> {
         let pool = self.pool.as_ref().ok_or("No database pool available")?;
         let sql = "
             SELECT
@@ -217,7 +222,7 @@ impl PostgresDriver {
 
         let mut fks = Vec::new();
         for row in rows {
-            fks.push(ForgeForeignKey {
+            fks.push(ForgeSchemaForeignKey {
                 name: row.get("constraint_name"),
                 column: row.get("column_name"),
                 ref_table: row.get("foreign_table_name"),
@@ -242,7 +247,7 @@ impl PostgresDriver {
     }
 
     #[must_use]
-    pub fn field_migration_sql(&self, field: &ForgeColumn, config: &ForgeConfig) -> String {
+    pub fn field_migration_sql(&self, field: &ForgeSchemaColumn, config: &ForgeConfig) -> String {
         // Map internal type to valid Postgres type via on_write config + fallbacks
         let pg_type = self.map_to_postgres_write_type(&field.data_type, config);
         let t = pg_type.to_lowercase();
@@ -294,7 +299,7 @@ impl PostgresDriver {
     #[must_use]
     pub fn build_postgres_create_table_sql(
         &self,
-        table: &ForgeTable,
+        table: &ForgeSchemaTable,
         config: &ForgeConfig,
     ) -> String {
         let cols: Vec<String> = table
@@ -308,7 +313,7 @@ impl PostgresDriver {
 
     pub fn create_table_migration_sql(
         &self,
-        target_table: &ForgeTable,
+        target_table: &ForgeSchemaTable,
         config: &ForgeConfig,
     ) -> Result<Vec<String>, Box<dyn Error>> {
         let mut statements = Vec::new();
@@ -323,7 +328,7 @@ impl PostgresDriver {
 
     pub fn delete_table_migration_sql(
         &self,
-        target_table: &ForgeTable,
+        target_table: &ForgeSchemaTable,
     ) -> Result<Vec<String>, Box<dyn Error>> {
         Ok(vec![format!(
             "DROP TABLE IF EXISTS {} CASCADE",
@@ -333,8 +338,8 @@ impl PostgresDriver {
 
     pub fn alter_table_migration_sql(
         &self,
-        source_table: &ForgeTable,
-        target_table: &ForgeTable,
+        source_table: &ForgeSchemaTable,
+        target_table: &ForgeSchemaTable,
         config: &ForgeConfig,
         destructive: bool,
     ) -> Result<Vec<String>, Box<dyn Error>> {
@@ -419,7 +424,11 @@ impl PostgresDriver {
     }
 
     #[must_use]
-    pub fn build_postgres_create_index_sql(&self, table_name: &str, index: &ForgeIndex) -> String {
+    pub fn build_postgres_create_index_sql(
+        &self,
+        table_name: &str,
+        index: &ForgeSchemaIndex,
+    ) -> String {
         let unique = if index.is_unique { "UNIQUE " } else { "" };
         format!(
             "CREATE {}INDEX {} ON {} ({})",
@@ -433,7 +442,7 @@ impl PostgresDriver {
     pub fn map_row_to_universal_values(
         &self,
         row: &PgRow,
-    ) -> Result<Vec<ForgeUniversalValue>, ForgeError> {
+    ) -> Result<Vec<ForgeUniversalDataField>, ForgeError> {
         let mut values = Vec::with_capacity(row.columns().iter().count());
 
         for (i, col) in row.columns().iter().enumerate() {
@@ -449,42 +458,44 @@ impl PostgresDriver {
 
             // Prüfung auf NULL
             if row.try_get_raw(i).map(|v| v.is_null()).unwrap_or(true) {
-                values.push(ForgeUniversalValue::Null);
+                values.push(ForgeUniversalDataField::Null);
                 continue;
             }
 
             let val = match type_name {
-                "INT2" | "SMALLINT" | "SMALLSERIAL" => ForgeUniversalValue::Integer(i64::from(
+                "INT2" | "SMALLINT" | "SMALLSERIAL" => ForgeUniversalDataField::Integer(i64::from(
                     row.try_get::<i16, _>(i).map_err(to_decode_err)?,
                 )),
-                "INT4" | "INTEGER" | "SERIAL" => ForgeUniversalValue::Integer(i64::from(
+                "INT4" | "INTEGER" | "SERIAL" => ForgeUniversalDataField::Integer(i64::from(
                     row.try_get::<i32, _>(i).map_err(to_decode_err)?,
                 )),
-                "INT8" | "BIGINT" | "BIGSERIAL" => {
-                    ForgeUniversalValue::Integer(row.try_get::<i64, _>(i).map_err(to_decode_err)?)
-                }
-                "FLOAT4" | "REAL" => ForgeUniversalValue::Float(f64::from(
+                "INT8" | "BIGINT" | "BIGSERIAL" => ForgeUniversalDataField::Integer(
+                    row.try_get::<i64, _>(i).map_err(to_decode_err)?,
+                ),
+                "FLOAT4" | "REAL" => ForgeUniversalDataField::Float(f64::from(
                     row.try_get::<f32, _>(i).map_err(to_decode_err)?,
                 )),
-                "FLOAT8" | "DOUBLE PRECISION" => ForgeUniversalValue::Float(row.get::<f64, _>(i)),
-                "TEXT" | "VARCHAR" | "CHAR" | "BPCHAR" | "NAME" => {
-                    ForgeUniversalValue::Text(row.try_get::<String, _>(i).map_err(to_decode_err)?)
+                "FLOAT8" | "DOUBLE PRECISION" => {
+                    ForgeUniversalDataField::Float(row.get::<f64, _>(i))
                 }
-                "BYTEA" => ForgeUniversalValue::Binary(
+                "TEXT" | "VARCHAR" | "CHAR" | "BPCHAR" | "NAME" => ForgeUniversalDataField::Text(
+                    row.try_get::<String, _>(i).map_err(to_decode_err)?,
+                ),
+                "BYTEA" => ForgeUniversalDataField::Binary(
                     row.try_get::<Vec<u8>, _>(i).map_err(to_decode_err)?,
                 ),
-                "BOOL" | "BOOLEAN" => {
-                    ForgeUniversalValue::Boolean(row.try_get::<bool, _>(i).map_err(to_decode_err)?)
-                }
-                "DATE" => ForgeUniversalValue::Date(
+                "BOOL" | "BOOLEAN" => ForgeUniversalDataField::Boolean(
+                    row.try_get::<bool, _>(i).map_err(to_decode_err)?,
+                ),
+                "DATE" => ForgeUniversalDataField::Date(
                     row.try_get::<chrono::NaiveDate, _>(i)
                         .map_err(to_decode_err)?,
                 ),
-                "TIME" | "TIMETZ" => ForgeUniversalValue::Time(
+                "TIME" | "TIMETZ" => ForgeUniversalDataField::Time(
                     row.try_get::<chrono::NaiveTime, _>(i)
                         .map_err(to_decode_err)?,
                 ),
-                "TIMESTAMP" => ForgeUniversalValue::DateTime(
+                "TIMESTAMP" => ForgeUniversalDataField::DateTime(
                     row.try_get::<chrono::NaiveDateTime, _>(i)
                         .map_err(to_decode_err)?,
                 ),
@@ -492,21 +503,21 @@ impl PostgresDriver {
                     let dt_utc = row
                         .try_get::<chrono::DateTime<chrono::Utc>, _>(i)
                         .map_err(to_decode_err)?;
-                    ForgeUniversalValue::DateTime(dt_utc.naive_utc())
+                    ForgeUniversalDataField::DateTime(dt_utc.naive_utc())
                 }
-                "NUMERIC" | "DECIMAL" => ForgeUniversalValue::Decimal(
+                "NUMERIC" | "DECIMAL" => ForgeUniversalDataField::Decimal(
                     row.try_get::<rust_decimal::Decimal, _>(i)
                         .map_err(to_decode_err)?,
                 ),
-                "JSON" | "JSONB" => ForgeUniversalValue::Json(
+                "JSON" | "JSONB" => ForgeUniversalDataField::Json(
                     row.try_get::<serde_json::Value, _>(i)
                         .map_err(to_decode_err)?,
                 ),
-                "UUID" => ForgeUniversalValue::Uuid(
+                "UUID" => ForgeUniversalDataField::Uuid(
                     row.try_get::<sqlx::types::Uuid, _>(i)
                         .map_err(to_decode_err)?,
                 ),
-                "INET" | "CIDR" => ForgeUniversalValue::Inet(
+                "INET" | "CIDR" => ForgeUniversalDataField::Inet(
                     row.try_get::<ipnetwork::IpNetwork, _>(i)
                         .map_err(to_decode_err)?,
                 ),
@@ -517,7 +528,7 @@ impl PostgresDriver {
                         .into_iter()
                         .map(|x| serde_json::Value::from(i64::from(x)))
                         .collect();
-                    ForgeUniversalValue::Json(serde_json::Value::Array(arr))
+                    ForgeUniversalDataField::Json(serde_json::Value::Array(arr))
                 }
                 s if s == "INT4[]" || s == "INTEGER[]" => {
                     let v = row.try_get::<Vec<i32>, _>(i).map_err(to_decode_err)?;
@@ -525,12 +536,12 @@ impl PostgresDriver {
                         .into_iter()
                         .map(|x| serde_json::Value::from(i64::from(x)))
                         .collect();
-                    ForgeUniversalValue::Json(serde_json::Value::Array(arr))
+                    ForgeUniversalDataField::Json(serde_json::Value::Array(arr))
                 }
                 s if s == "INT8[]" || s == "BIGINT[]" => {
                     let v = row.try_get::<Vec<i64>, _>(i).map_err(to_decode_err)?;
                     let arr = v.into_iter().map(serde_json::Value::from).collect();
-                    ForgeUniversalValue::Json(serde_json::Value::Array(arr))
+                    ForgeUniversalDataField::Json(serde_json::Value::Array(arr))
                 }
                 s if s == "TEXT[]"
                     || s == "VARCHAR[]"
@@ -540,12 +551,12 @@ impl PostgresDriver {
                 {
                     let v = row.try_get::<Vec<String>, _>(i).map_err(to_decode_err)?;
                     let arr = v.into_iter().map(serde_json::Value::from).collect();
-                    ForgeUniversalValue::Json(serde_json::Value::Array(arr))
+                    ForgeUniversalDataField::Json(serde_json::Value::Array(arr))
                 }
                 s if s == "BOOL[]" || s == "BOOLEAN[]" => {
                     let v = row.try_get::<Vec<bool>, _>(i).map_err(to_decode_err)?;
                     let arr = v.into_iter().map(serde_json::Value::from).collect();
-                    ForgeUniversalValue::Json(serde_json::Value::Array(arr))
+                    ForgeUniversalDataField::Json(serde_json::Value::Array(arr))
                 }
                 s if s == "FLOAT4[]" || s == "REAL[]" => {
                     let v = row.try_get::<Vec<f32>, _>(i).map_err(to_decode_err)?;
@@ -553,12 +564,12 @@ impl PostgresDriver {
                         .into_iter()
                         .map(|x| serde_json::Value::from(f64::from(x)))
                         .collect();
-                    ForgeUniversalValue::Json(serde_json::Value::Array(arr))
+                    ForgeUniversalDataField::Json(serde_json::Value::Array(arr))
                 }
                 s if s == "FLOAT8[]" || s == "DOUBLE PRECISION[]" => {
                     let v = row.try_get::<Vec<f64>, _>(i).map_err(to_decode_err)?;
                     let arr = v.into_iter().map(serde_json::Value::from).collect();
-                    ForgeUniversalValue::Json(serde_json::Value::Array(arr))
+                    ForgeUniversalDataField::Json(serde_json::Value::Array(arr))
                 }
                 _ => {
                     return Err(ForgeError::UnsupportedPostgresType {
@@ -622,7 +633,7 @@ impl DatabaseDriver for PostgresDriver {
         }
 
         Ok(ForgeSchema {
-            metadata: ForgeMetadata {
+            metadata: ForgeSchemaMetadata {
                 source_system: "postgres".to_string(),
                 source_database_name: db_name,
                 created_at: chrono::Local::now().to_rfc3339(),
@@ -644,12 +655,12 @@ impl DatabaseDriver for PostgresDriver {
         let target_schema = self.fetch_schema(config).await?;
         let mut all_statements = Vec::new();
 
-        let mut source_tables: HashMap<String, &ForgeTable> = HashMap::new();
+        let mut source_tables: HashMap<String, &ForgeSchemaTable> = HashMap::new();
         for table in &source_schema.tables {
             source_tables.insert(table.name.clone(), table);
         }
 
-        let mut target_tables: HashMap<String, &ForgeTable> = HashMap::new();
+        let mut target_tables: HashMap<String, &ForgeSchemaTable> = HashMap::new();
         for table in &target_schema.tables {
             target_tables.insert(table.name.clone(), table);
         }
@@ -694,7 +705,7 @@ impl DatabaseDriver for PostgresDriver {
     ) -> Result<
         Pin<
             Box<
-                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalDataField>, ForgeError>>
                     + Send
                     + '_,
             >,
@@ -728,7 +739,7 @@ impl DatabaseDriver for PostgresDriver {
     ) -> Result<
         Pin<
             Box<
-                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalDataField>, ForgeError>>
                     + Send
                     + '_,
             >,
@@ -766,7 +777,7 @@ impl DatabaseDriver for PostgresDriver {
         table_name: &str,
         dry_run: bool,
         halt_on_error: bool,
-        chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
+        chunk: Vec<IndexMap<String, ForgeUniversalDataField>>,
     ) -> Result<(), Box<dyn Error>> {
         if chunk.is_empty() {
             return Ok(());
@@ -803,7 +814,7 @@ impl DatabaseDriver for PostgresDriver {
             let mut query = sqlx::query(&sql);
             for row in &chunk {
                 for col in &columns {
-                    let val = row.get(col).unwrap_or(&ForgeUniversalValue::Null);
+                    let val = row.get(col).unwrap_or(&ForgeUniversalDataField::Null);
                     query = self.bind_universal(query, val);
                 }
             }
@@ -819,12 +830,13 @@ impl DatabaseDriver for PostgresDriver {
 
                     // Build value list with per-value casting where needed
                     for col in &columns {
-                        let val = row_map.get(col).unwrap_or(&ForgeUniversalValue::Null);
+                        let val = row_map.get(col).unwrap_or(&ForgeUniversalDataField::Null);
                         match val {
-                            ForgeUniversalValue::Null | ForgeUniversalValue::ZeroDateTime => {
+                            ForgeUniversalDataField::Null
+                            | ForgeUniversalDataField::ZeroDateTime => {
                                 value_sql_parts.push("NULL".to_string());
                             }
-                            ForgeUniversalValue::Json(_) => {
+                            ForgeUniversalDataField::Json(_) => {
                                 value_sql_parts.push(format!("${arg_index}::jsonb"));
                                 arg_index += 1;
                             }
@@ -846,11 +858,11 @@ impl DatabaseDriver for PostgresDriver {
 
                     // Bind only the non-NULL parameters in the same order we generated above
                     for col in &columns {
-                        let val = row_map.get(col).unwrap_or(&ForgeUniversalValue::Null);
+                        let val = row_map.get(col).unwrap_or(&ForgeUniversalDataField::Null);
                         match val {
-                            ForgeUniversalValue::Null | ForgeUniversalValue::ZeroDateTime => { /* no bind */
-                            }
-                            ForgeUniversalValue::Json(j) => {
+                            ForgeUniversalDataField::Null
+                            | ForgeUniversalDataField::ZeroDateTime => { /* no bind */ }
+                            ForgeUniversalDataField::Json(j) => {
                                 single_query = single_query.bind(sqlx::types::Json(j));
                             }
                             other => {

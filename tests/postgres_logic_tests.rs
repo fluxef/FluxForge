@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use fluxforge::core::{ForgeColumn, ForgeConfig, ForgeTable};
+    use fluxforge::core::{ForgeConfig, ForgeSchemaColumn, ForgeSchemaTable};
     use fluxforge::drivers::postgres::PostgresDriver;
 
     // Helper to create a driver without a real pool (will fail on DB calls, but ok for pure logic)
@@ -15,13 +15,13 @@ mod tests {
         let driver = mock_driver();
         let config = ForgeConfig::default();
 
-        let col = ForgeColumn {
+        let col = ForgeSchemaColumn {
             name: "test_col".to_string(),
             data_type: "varchar".to_string(),
             length: Some(255),
             is_nullable: false,
             default: Some("'default'".to_string()),
-            ..ForgeColumn::default()
+            ..ForgeSchemaColumn::default()
         };
 
         let sql = driver.field_migration_sql(&col, &config);
@@ -33,9 +33,9 @@ mod tests {
         let driver = mock_driver();
         let config = ForgeConfig::default();
 
-        let mut table = ForgeTable::new("my_table");
-        table.columns.push(ForgeColumn::new("id", "serial"));
-        table.columns.push(ForgeColumn::new("name", "text"));
+        let mut table = ForgeSchemaTable::new("my_table");
+        table.columns.push(ForgeSchemaColumn::new("id", "serial"));
+        table.columns.push(ForgeSchemaColumn::new("name", "text"));
 
         let sql = driver.build_postgres_create_table_sql(&table, &config);
         let expected = "CREATE TABLE my_table (\n  id serial NOT NULL,\n  name text NOT NULL\n)";
@@ -75,14 +75,18 @@ mod tests {
         let driver = mock_driver();
         let config = ForgeConfig::default();
 
-        let mut source_table = ForgeTable::new("users");
-        source_table.columns.push(ForgeColumn::new("id", "int4"));
+        let mut source_table = ForgeSchemaTable::new("users");
         source_table
             .columns
-            .push(ForgeColumn::new("email", "varchar"));
+            .push(ForgeSchemaColumn::new("id", "int4"));
+        source_table
+            .columns
+            .push(ForgeSchemaColumn::new("email", "varchar"));
 
-        let mut target_table = ForgeTable::new("users");
-        target_table.columns.push(ForgeColumn::new("id", "int4"));
+        let mut target_table = ForgeSchemaTable::new("users");
+        target_table
+            .columns
+            .push(ForgeSchemaColumn::new("id", "int4"));
 
         let stmts = driver
             .alter_table_migration_sql(&source_table, &target_table, &config, false)
@@ -97,13 +101,13 @@ mod tests {
         let driver = mock_driver();
         let config = ForgeConfig::default();
 
-        let mut source_table = ForgeTable::new("users");
-        let mut col_new = ForgeColumn::new("id", "int8");
+        let mut source_table = ForgeSchemaTable::new("users");
+        let mut col_new = ForgeSchemaColumn::new("id", "int8");
         col_new.is_nullable = true;
         source_table.columns.push(col_new);
 
-        let mut target_table = ForgeTable::new("users");
-        let mut col_old = ForgeColumn::new("id", "int4");
+        let mut target_table = ForgeSchemaTable::new("users");
+        let mut col_old = ForgeSchemaColumn::new("id", "int4");
         col_old.is_nullable = false;
         target_table.columns.push(col_old);
 

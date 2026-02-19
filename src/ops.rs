@@ -6,7 +6,7 @@
 //! - Data verification after replication
 //! - Error logging for failed operations
 
-use crate::{DatabaseDriver, ForgeSchema, ForgeTable, ForgeUniversalValue};
+use crate::{DatabaseDriver, ForgeSchema, ForgeSchemaTable, ForgeUniversalDataField};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use petgraph::algo::toposort;
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 
-fn order_by_columns(table: &ForgeTable) -> Vec<String> {
+fn order_by_columns(table: &ForgeSchemaTable) -> Vec<String> {
     let primary_keys: Vec<String> = table
         .columns
         .iter()
@@ -30,8 +30,8 @@ fn order_by_columns(table: &ForgeTable) -> Vec<String> {
     }
 }
 
-fn values_equal(left: &ForgeUniversalValue, right: &ForgeUniversalValue) -> bool {
-    use ForgeUniversalValue::{
+fn values_equal(left: &ForgeUniversalDataField, right: &ForgeUniversalDataField) -> bool {
+    use ForgeUniversalDataField::{
         Binary, Boolean, Date, DateTime, Decimal, Float, Inet, Integer, Json, Null, Text, Time,
         UnsignedInteger, Uuid, Year, ZeroDateTime,
     };
@@ -63,12 +63,16 @@ fn values_equal(left: &ForgeUniversalValue, right: &ForgeUniversalValue) -> bool
 
 fn rows_equal(
     columns: &[String],
-    source_row: &indexmap::IndexMap<String, ForgeUniversalValue>,
-    target_row: &indexmap::IndexMap<String, ForgeUniversalValue>,
+    source_row: &indexmap::IndexMap<String, ForgeUniversalDataField>,
+    target_row: &indexmap::IndexMap<String, ForgeUniversalDataField>,
 ) -> Result<(), String> {
     for column in columns {
-        let source_value = source_row.get(column).unwrap_or(&ForgeUniversalValue::Null);
-        let target_value = target_row.get(column).unwrap_or(&ForgeUniversalValue::Null);
+        let source_value = source_row
+            .get(column)
+            .unwrap_or(&ForgeUniversalDataField::Null);
+        let target_value = target_row
+            .get(column)
+            .unwrap_or(&ForgeUniversalDataField::Null);
         if !values_equal(source_value, target_value) {
             return Err(format!(
                 "Mismatch in column `{column}`: expected {source_value:?} but got {target_value:?}"
@@ -82,7 +86,7 @@ fn rows_equal(
 async fn verify_table_data(
     source: &dyn DatabaseDriver,
     target: &dyn DatabaseDriver,
-    table: &ForgeTable,
+    table: &ForgeSchemaTable,
     multi: &MultiProgress,
     style: &ProgressStyle,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -282,7 +286,7 @@ pub async fn replicate_data(
 /// Returns an error if:
 /// - Circular dependencies are detected (tables reference each other in a cycle)
 /// - A foreign key references a non-existent table
-pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTable>, String> {
+pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeSchemaTable>, String> {
     let mut graph = DiGraph::<&str, ()>::new();
     let mut nodes = HashMap::new();
 
@@ -310,7 +314,7 @@ pub fn sort_tables_by_dependencies(schema: &ForgeSchema) -> Result<Vec<ForgeTabl
     match toposort(&graph, None) {
         Ok(sorted_indices) => {
             let mut sorted_tables = Vec::new();
-            let table_map: HashMap<&str, &ForgeTable> =
+            let table_map: HashMap<&str, &ForgeSchemaTable> =
                 schema.tables.iter().map(|t| (t.name.as_str(), t)).collect();
 
             for idx in sorted_indices {
@@ -373,11 +377,11 @@ mod tests {
     use indexmap::IndexMap;
 
     struct MockDriver {
-        data: HashMap<String, Vec<IndexMap<String, ForgeUniversalValue>>>,
+        data: HashMap<String, Vec<IndexMap<String, ForgeUniversalDataField>>>,
     }
 
     impl MockDriver {
-        fn new(data: HashMap<String, Vec<IndexMap<String, ForgeUniversalValue>>>) -> Self {
+        fn new(data: HashMap<String, Vec<IndexMap<String, ForgeUniversalDataField>>>) -> Self {
             Self { data }
         }
     }
@@ -413,7 +417,10 @@ mod tests {
             std::pin::Pin<
                 Box<
                     dyn futures::Stream<
-                            Item = Result<IndexMap<String, ForgeUniversalValue>, crate::ForgeError>,
+                            Item = Result<
+                                IndexMap<String, ForgeUniversalDataField>,
+                                crate::ForgeError,
+                            >,
                         > + Send
                         + '_,
                 >,
@@ -431,7 +438,10 @@ mod tests {
             std::pin::Pin<
                 Box<
                     dyn futures::Stream<
-                            Item = Result<IndexMap<String, ForgeUniversalValue>, crate::ForgeError>,
+                            Item = Result<
+                                IndexMap<String, ForgeUniversalDataField>,
+                                crate::ForgeError,
+                            >,
                         > + Send
                         + '_,
                 >,
@@ -452,7 +462,7 @@ mod tests {
             _table_name: &str,
             _dry_run: bool,
             _halt_on_error: bool,
-            _chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
+            _chunk: Vec<IndexMap<String, ForgeUniversalDataField>>,
         ) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
@@ -468,21 +478,23 @@ mod tests {
         }
     }
 
-    fn build_table() -> ForgeTable {
-        let mut table = ForgeTable::new("users");
-        let mut id_column = crate::ForgeColumn::new("id", "int");
+    fn build_table() -> ForgeSchemaTable {
+        let mut table = ForgeSchemaTable::new("users");
+        let mut id_column = crate::ForgeSchemaColumn::new("id", "int");
         id_column.is_primary_key = true;
         table.columns.push(id_column);
-        table.columns.push(crate::ForgeColumn::new("name", "text"));
+        table
+            .columns
+            .push(crate::ForgeSchemaColumn::new("name", "text"));
         table
     }
 
-    fn row(id: i64, name: &str) -> IndexMap<String, ForgeUniversalValue> {
+    fn row(id: i64, name: &str) -> IndexMap<String, ForgeUniversalDataField> {
         let mut map = IndexMap::new();
-        map.insert("id".to_string(), ForgeUniversalValue::Integer(id));
+        map.insert("id".to_string(), ForgeUniversalDataField::Integer(id));
         map.insert(
             "name".to_string(),
-            ForgeUniversalValue::Text(name.to_string()),
+            ForgeUniversalDataField::Text(name.to_string()),
         );
         map
     }

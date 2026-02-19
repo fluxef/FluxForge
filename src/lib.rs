@@ -30,8 +30,10 @@ pub mod drivers;
 pub mod ops;
 
 // Re-export for easier access
-pub use crate::core::{ForgeColumn, ForgeSchema, ForgeTable};
-use crate::core::{ForgeConfig, ForgeError, ForgeUniversalValue};
+pub use crate::core::{ForgeConfig, ForgeError};
+pub use crate::core::{ForgeSchema, ForgeSchemaColumn, ForgeSchemaTable};
+pub use crate::core::{ForgeUniversalDataField, ForgeUniversalDataRow};
+
 use async_trait::async_trait;
 use futures::Stream;
 use indexmap::IndexMap;
@@ -186,7 +188,7 @@ pub trait DatabaseDriver: Send + Sync {
     ) -> Result<
         Pin<
             Box<
-                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalDataField>, ForgeError>>
                     + Send
                     + '_,
             >,
@@ -232,7 +234,7 @@ pub trait DatabaseDriver: Send + Sync {
     ) -> Result<
         Pin<
             Box<
-                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalValue>, ForgeError>>
+                dyn Stream<Item = Result<IndexMap<String, ForgeUniversalDataField>, ForgeError>>
                     + Send
                     + '_,
             >,
@@ -252,12 +254,12 @@ pub trait DatabaseDriver: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # use fluxforge::{DatabaseDriver, core::ForgeUniversalValue};
+    /// # use fluxforge::{DatabaseDriver, core::ForgeUniversalDataField};
     /// # use indexmap::IndexMap;
     /// # async fn example(driver: &dyn DatabaseDriver) -> Result<(), Box<dyn std::error::Error>> {
     /// let mut row = IndexMap::new();
-    /// row.insert("id".to_string(), ForgeUniversalValue::Integer(1));
-    /// row.insert("name".to_string(), ForgeUniversalValue::Text("Alice".to_string()));
+    /// row.insert("id".to_string(), ForgeUniversalDataField::Integer(1));
+    /// row.insert("name".to_string(), ForgeUniversalDataField::Text("Alice".to_string()));
     /// driver.insert_chunk("users", false, true, vec![row]).await?;
     /// # Ok(())
     /// # }
@@ -275,7 +277,7 @@ pub trait DatabaseDriver: Send + Sync {
         table_name: &str,
         dry_run: bool,
         halt_on_error: bool,
-        chunk: Vec<IndexMap<String, ForgeUniversalValue>>,
+        chunk: Vec<IndexMap<String, ForgeUniversalDataField>>,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
     /// Gets the total number of rows in a table.

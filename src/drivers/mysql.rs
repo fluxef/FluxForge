@@ -55,7 +55,7 @@ impl MySqlDriver {
         }
     }
 
-    pub async fn fetch_tables(&self) -> Result<Vec<ForgeSchemaTable>, Box<dyn std::error::Error>> {
+    pub async fn fetch_tables(&self) -> Result<Vec<ForgeSchemaTable>, Box<dyn Error>> {
         // SHOW TABLE STATUS gives also name and comment
         let rows = sqlx::query("SHOW TABLE STATUS")
             .fetch_all(&self.pool)
@@ -105,7 +105,7 @@ impl MySqlDriver {
             .cloned()
             .unwrap_or(mysql_data_type_lower.clone());
 
-        // if unsigned rule is set we convert to bigint and dont set is_unsigned (would be obsolete/confusing with bigint)
+        // if unsigned rule is set we convert to bigint and don't set is_unsigned (would be obsolete/confusing with bigint)
         if let Some(mysql_cfg) = &config.mysql
             && let Some(rules) = &mysql_cfg.rules
             && let Some(on_read) = &rules.on_read
@@ -123,7 +123,7 @@ impl MySqlDriver {
         &self,
         table_name: &str,
         config: &ForgeConfig,
-    ) -> Result<Vec<ForgeSchemaColumn>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<ForgeSchemaColumn>, Box<dyn Error>> {
         // SHOW FULL FIELDS gives:
         // Field, Type, Collation, Null, Key, Default, Extra, Privileges, Comment
         let query = format!("SHOW FULL FIELDS FROM `{table_name}`");
@@ -167,7 +167,7 @@ impl MySqlDriver {
                 .cloned()
                 .unwrap_or(mysql_data_type.clone());
 
-            // special case for unsigned
+            // in special case for unsigned
             // if unsigned_int_to_bigint in config is set, we convert unsigned always to bigint and set is_unsigned to false
             // because a set is_unsigned would be obsolete/confusing with bigint
             let mut is_unsigned = mysql_column_type.to_lowercase().contains("unsigned");
@@ -185,7 +185,7 @@ impl MySqlDriver {
 
             // extract extra info like AUTO_INCREMENT, ON UPDATE ...
             let extra = get_s("Extra");
-            // if extra starts with  "ON UPDATE " we use the remaining and assign it to on_update variable
+            // if extra starts with "ON UPDATE", we use the remaining and assign it to on_update variable
             let on_update = if extra.len() >= 10 && extra[..10].eq_ignore_ascii_case("ON UPDATE ") {
                 Some(extra[10..].to_string())
             } else {
@@ -276,7 +276,7 @@ impl MySqlDriver {
     pub async fn fetch_indices(
         &self,
         table_name: &str,
-    ) -> Result<Vec<ForgeSchemaIndex>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<ForgeSchemaIndex>, Box<dyn Error>> {
         // SHOW INDEX FROM `table` gives:
         // Table, Non_unique, Key_name, Seq_in_index, Column_name, Collation, Cardinality, ...
         let query = format!("SHOW INDEX FROM `{table_name}`");
@@ -312,7 +312,7 @@ impl MySqlDriver {
             // Non_unique is usually Integer (0 = Unique/PK, 1 = Normal)
             let is_unique = row.try_get::<i64, _>("Non_unique").unwrap_or(1) == 0;
 
-            // we ignore primary, because is it covered by  ForgeSchemaColumn.is_primary_key
+            // we ignore primary, because is it covered by ForgeSchemaColumn.is_primary_key
             if index_name == "PRIMARY" {
                 continue;
             }
@@ -355,7 +355,7 @@ impl MySqlDriver {
     pub async fn fetch_foreign_keys(
         &self,
         _table_name: &str,
-    ) -> Result<Vec<ForgeSchemaForeignKey>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<ForgeSchemaForeignKey>, Box<dyn Error>> {
         // TODO implement after first release
         Ok(Vec::new())
     }
@@ -481,7 +481,7 @@ impl MySqlDriver {
         &self,
         dst_table: &ForgeSchemaTable,
         config: &ForgeConfig,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         let mut stmts = Vec::new();
         let sql = self.build_mysql_create_table_sql(dst_table, config);
         stmts.push(sql);
@@ -496,7 +496,7 @@ impl MySqlDriver {
     pub fn delete_table_migration_sql(
         &self,
         dst_table: &ForgeSchemaTable,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         let sql = format!("DROP TABLE `{}`;", dst_table.name);
         Ok(vec![sql])
     }
@@ -506,7 +506,7 @@ impl MySqlDriver {
         dst_table: &ForgeSchemaTable,
         config: &ForgeConfig,
         destructive: bool,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<String>, Box<dyn Error>> {
         let mut all_statements = Vec::new();
 
         // ---- Columns ----
@@ -714,7 +714,7 @@ impl MySqlDriver {
         format!("DROP INDEX `{index_name}` ON `{table_name}`;")
     }
 
-    /// comparison if two indexes are identical (without names, thats already checked via map-key)
+    /// comparison if two indexes are identical (without names, that's already checked via the map-key)
     #[must_use]
     pub fn indices_equal(&self, a: &ForgeSchemaIndex, b: &ForgeSchemaIndex) -> bool {
         if a.is_unique != b.is_unique {
@@ -753,24 +753,24 @@ impl MySqlDriver {
         true
     }
 
-    /// read a column from an index as string
+    /// read a column from an index as a string
     /// helper if `MySQL` VARBINARY or BLOB are returned from mysql.
-    pub fn get_string_at_index(&self, row: &sqlx::mysql::MySqlRow, index: usize) -> Option<String> {
+    pub fn get_string_at_index(&self, row: &MySqlRow, index: usize) -> Option<String> {
         let bytes: Vec<u8> = row.try_get(index).unwrap_or_default();
 
         if bytes.is_empty() {
             return None;
         }
 
-        // convert into UTF8, ingnore invalid chars
+        // convert into UTF8, ignore invalid chars
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    /// special handling for empty mysql date, datetime,timestamp, time values that start with 0000-00-00
+    /// special handling for empty mysql date, datetime, timestamp, time values that start with 0000-00-00
     /// postgres does not understand those "0000-00-00" values
     pub fn handle_datetime_and_time(
         &self,
-        row: &sqlx::mysql::MySqlRow,
+        row: &MySqlRow,
         index: usize,
     ) -> Result<ForgeUniversalDataField, sqlx::Error> {
         let column = &row.columns()[index];
@@ -786,29 +786,29 @@ impl MySqlDriver {
             if let Ok(dt_utc) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
                 return Ok(ForgeUniversalDataField::DateTime(dt_utc.naive_utc()));
             }
-        } else if type_name.contains("DATE") {
-            if let Ok(d) = row.try_get::<chrono::NaiveDate, _>(index) {
-                return Ok(ForgeUniversalDataField::Date(d));
-            }
-        } else if type_name.contains("TIME") {
-            if let Ok(t) = row.try_get::<chrono::NaiveTime, _>(index) {
-                return Ok(ForgeUniversalDataField::Time(t));
-            }
+        } else if type_name.contains("DATE")
+            && let Ok(d) = row.try_get::<chrono::NaiveDate, _>(index)
+        {
+            return Ok(ForgeUniversalDataField::Date(d));
+        } else if type_name.contains("TIME")
+            && let Ok(t) = row.try_get::<chrono::NaiveTime, _>(index)
+        {
+            return Ok(ForgeUniversalDataField::Time(t));
         }
 
-        // when we are here the normal way via chrono failed
+        // when we are here, the normal way via chrono failed
 
         // --- check MySQL "Zero"- special values (0000-00-00 etc.) ---
-        // we use row-data checks to circumvent the internal  SQLx-date-parser.
+        // here we use raw-data checks to circumvent the internal SQLx-date-parser.
 
-        // variant A : Byte-layer (most secure for binary protocol)
+        // variant A: Byte-layer (most secure for binary protocol)
         if let Ok(bytes) = row.try_get::<Vec<u8>, _>(index) {
-            // MySQL Zero- Values are often empty voctors or Null-Byte-sequences
+            // MySQL Zero- Values are often empty vectors or Null-Byte-sequences
             if bytes.is_empty() || bytes.iter().all(|&b| b == 0) {
                 return Ok(ForgeUniversalDataField::ZeroDateTime);
             }
 
-            // if we see a Text  (i.e. "0000-00-00" or "00:00:00")
+            // if we see a Text (i.e. "0000-00-00" or "00:00:00")
             let s = String::from_utf8_lossy(&bytes);
             if s.contains("0000-00-00") || s.contains("00:00:00") || s.chars().all(|c| c == '\0') {
                 return Ok(ForgeUniversalDataField::ZeroDateTime);
@@ -816,19 +816,18 @@ impl MySqlDriver {
         }
 
         // variant B: String-layer (Fallback if Vec<u8> failed)
-        if let Ok(s) = row.try_get::<String, _>(index) {
-            if s.is_empty()
+        if let Ok(s) = row.try_get::<String, _>(index)
+            && (s.is_empty()
                 || s.contains("0000-00-00")
                 || s.contains("00:00:00")
-                || s.chars().all(|c| c == '\0')
-            {
-                return Ok(ForgeUniversalDataField::ZeroDateTime);
-            }
+                || s.chars().all(|c| c == '\0'))
+        {
+            return Ok(ForgeUniversalDataField::ZeroDateTime);
         }
 
         // --- check for real SQL-NULL ---
         let raw_value = row.try_get_raw(index)?;
-        if sqlx::ValueRef::is_null(&raw_value) {
+        if ValueRef::is_null(&raw_value) {
             return Ok(ForgeUniversalDataField::Null);
         }
 
@@ -842,7 +841,6 @@ impl MySqlDriver {
             .into(),
         ))
     }
-
 
     /// maps a MySQL-row into intermediate and DB-neutral ForgeUniversalDataField-Structure
     pub fn map_row_to_universal_values(
@@ -863,9 +861,8 @@ impl MySqlDriver {
                     source: e,
                 };
 
-
                 let val = match type_name.as_str() {
-                    // we skip the null-check because these are handled in fumction
+                    // we skip the null-check because these are handled in function
                     "DATETIME" | "TIMESTAMP" | "DATE" | "TIME" => {
                         self.handle_datetime_and_time(row, i).map_err(to_err)?
                     }
@@ -873,7 +870,7 @@ impl MySqlDriver {
                     // for all other types we do the Standard-NULL-Check beforehand
                     _ => {
                         let raw = row.try_get_raw(i).map_err(to_err)?;
-                        if sqlx::ValueRef::is_null(&raw) {
+                        if ValueRef::is_null(&raw) {
                             ForgeUniversalDataField::Null
                         } else {
                             match type_name.as_str() {
@@ -939,7 +936,7 @@ impl MySqlDriver {
                                     ForgeUniversalDataField::Binary(v.to_be_bytes().to_vec())
                                 }
 
-                                // String-Fallback for VARCHAR, TEXT etc.
+                                // String-Fallback for VARCHAR, TEXT, etc.
                                 "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT"
                                 | "LONGTEXT" | "ENUM" | "SET" => ForgeUniversalDataField::Text(
                                     row.try_get::<String, _>(i).map_err(to_err)?,
@@ -975,10 +972,7 @@ impl DatabaseDriver for MySqlDriver {
         Ok(count == 0)
     }
 
-    async fn fetch_schema(
-        &self,
-        config: &ForgeConfig,
-    ) -> Result<ForgeSchema, Box<dyn std::error::Error>> {
+    async fn fetch_schema(&self, config: &ForgeConfig) -> Result<ForgeSchema, Box<dyn Error>> {
         // get database name from database
         let db_name: String = sqlx::query_scalar("SELECT DATABASE()")
             .fetch_one(&self.pool)
@@ -987,7 +981,7 @@ impl DatabaseDriver for MySqlDriver {
         // get all basic table structures
         let mut tables = self.fetch_tables().await?;
 
-        // get details of all table
+        // get details of all tables
         for table in &mut tables {
             // fetch all columns with applying mapping config
             table.columns = self.fetch_columns(&table.name, config).await?;
@@ -1088,7 +1082,7 @@ impl DatabaseDriver for MySqlDriver {
                     + '_,
             >,
         >,
-        Box<dyn std::error::Error>,
+        Box<dyn Error>,
     > {
         let query_string = format!("SELECT * FROM `{table_name}`");
 
@@ -1096,7 +1090,7 @@ impl DatabaseDriver for MySqlDriver {
             let mut rows = sqlx::query(&query_string).fetch(&self.pool);
 
             while let Some(row) = rows.next().await {
-                let row: sqlx::mysql::MySqlRow = row?;
+                let row: MySqlRow = row?;
                 let values = self.map_row_to_universal_values(&row)?;
 
                 let mut row_map = IndexMap::new();
@@ -1123,7 +1117,7 @@ impl DatabaseDriver for MySqlDriver {
                     + '_,
             >,
         >,
-        Box<dyn std::error::Error>,
+        Box<dyn Error>,
     > {
         let order_clause = if order_by.is_empty() {
             String::new()
@@ -1142,7 +1136,7 @@ impl DatabaseDriver for MySqlDriver {
             let mut rows = sqlx::query(&query_string).fetch(&self.pool);
 
             while let Some(row) = rows.next().await {
-                let row: sqlx::mysql::MySqlRow = row?;
+                let row: MySqlRow = row?;
                 let values = self.map_row_to_universal_values(&row)?;
 
                 let mut row_map = IndexMap::new();
@@ -1163,7 +1157,7 @@ impl DatabaseDriver for MySqlDriver {
         dry_run: bool,
         halt_on_error: bool,
         chunk: Vec<IndexMap<String, ForgeUniversalDataField>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn Error>> {
         if chunk.is_empty() {
             return Ok(());
         }
@@ -1198,7 +1192,7 @@ impl DatabaseDriver for MySqlDriver {
                     // value from IndexMap holen, Fallback to Null
                     let val = row.get(col).unwrap_or(&ForgeUniversalDataField::Null);
 
-                    // binding based on UniveralEnums
+                    // binding based on UniversalEnums
                     query = self.bind_universal(query, val);
                 }
             }
@@ -1247,10 +1241,7 @@ impl DatabaseDriver for MySqlDriver {
         Ok(())
     }
 
-    async fn get_table_row_count(
-        &self,
-        table_name: &str,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    async fn get_table_row_count(&self, table_name: &str) -> Result<u64, Box<dyn Error>> {
         let query = format!("SELECT COUNT(*) FROM `{table_name}`");
         let row: (i64,) = sqlx::query_as(&query).fetch_one(&self.pool).await?;
         Ok(row.0 as u64)

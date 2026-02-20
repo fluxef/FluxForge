@@ -766,49 +766,83 @@ impl MySqlDriver {
         Some(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    /// special handling for empty mysql date and datetime values that start with 0000-00-00
+    /// special handling for empty mysql date, datetime,timestamp, time values that start with 0000-00-00
     /// postgres does not understand those "0000-00-00" values
-    pub fn handle_datetime(
+    pub fn handle_datetime_and_time(
         &self,
-        row: &MySqlRow,
+        row: &sqlx::mysql::MySqlRow,
         index: usize,
     ) -> Result<ForgeUniversalDataField, sqlx::Error> {
         let column = &row.columns()[index];
-        let type_name = column.type_info().name();
+        let type_name = column.type_info().name().to_uppercase();
 
-        // try normal decode
-        if type_name == "TIMESTAMP" {
-            // with TIMESTAMP tries sqlx often UTC
+        // ---- Try to decode normally via chrono
+
+        if type_name.contains("TIMESTAMP") || type_name.contains("DATETIME") {
+            if let Ok(dt) = row.try_get::<chrono::NaiveDateTime, _>(index) {
+                return Ok(ForgeUniversalDataField::DateTime(dt));
+            }
+            // Fallback for TIMESTAMP (UTC)
             if let Ok(dt_utc) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(index) {
                 return Ok(ForgeUniversalDataField::DateTime(dt_utc.naive_utc()));
             }
-        } else if let Ok(dt) = row.try_get::<chrono::NaiveDateTime, _>(index) {
-            return Ok(ForgeUniversalDataField::DateTime(dt));
+        } else if type_name.contains("DATE") {
+            if let Ok(d) = row.try_get::<chrono::NaiveDate, _>(index) {
+                return Ok(ForgeUniversalDataField::Date(d));
+            }
+        } else if type_name.contains("TIME") {
+            if let Ok(t) = row.try_get::<chrono::NaiveTime, _>(index) {
+                return Ok(ForgeUniversalDataField::Time(t));
+            }
         }
 
-        // special case for MySQL "Zero-Dates" or decode error
-        let raw_value = row.try_get_raw(index)?; // returns sqlx::Error zurück, if it fails
+        // when we are here the normal way via chrono failed
 
-        if raw_value.is_null() {
+        // --- check MySQL "Zero"- special values (0000-00-00 etc.) ---
+        // we use row-data checks to circumvent the internal  SQLx-date-parser.
+
+        // variant A : Byte-layer (most secure for binary protocol)
+        if let Ok(bytes) = row.try_get::<Vec<u8>, _>(index) {
+            // MySQL Zero- Values are often empty voctors or Null-Byte-sequences
+            if bytes.is_empty() || bytes.iter().all(|&b| b == 0) {
+                return Ok(ForgeUniversalDataField::ZeroDateTime);
+            }
+
+            // if we see a Text  (i.e. "0000-00-00" or "00:00:00")
+            let s = String::from_utf8_lossy(&bytes);
+            if s.contains("0000-00-00") || s.contains("00:00:00") || s.chars().all(|c| c == '\0') {
+                return Ok(ForgeUniversalDataField::ZeroDateTime);
+            }
+        }
+
+        // variant B: String-layer (Fallback if Vec<u8> failed)
+        if let Ok(s) = row.try_get::<String, _>(index) {
+            if s.is_empty()
+                || s.contains("0000-00-00")
+                || s.contains("00:00:00")
+                || s.chars().all(|c| c == '\0')
+            {
+                return Ok(ForgeUniversalDataField::ZeroDateTime);
+            }
+        }
+
+        // --- check for real SQL-NULL ---
+        let raw_value = row.try_get_raw(index)?;
+        if sqlx::ValueRef::is_null(&raw_value) {
             return Ok(ForgeUniversalDataField::Null);
         }
 
-        // sqlx could not decode it into NaiveDateTime
-        // we check for MySQL "0000-00-00" pattern as String-Fallback.
-        if let Ok(s) = row.try_get::<String, _>(index) {
-            if s.starts_with("0000-00-00") {
-                return Ok(ForgeUniversalDataField::ZeroDateTime);
-            }
-            // valid string, but no Zero-Date,
-            // we save it as string
-            return Ok(ForgeUniversalDataField::Text(s));
-        }
-
-        // if everythin else fails, mayb binary trash in columns, we return it as decoding-error
+        // --- nothing works -> error  ---
         Err(sqlx::Error::Decode(
-            "Invalid DateTime/Timestamp or corrupted Zero-Date".into(),
+            format!(
+                "Columns '{}' (Type {}): Value could not be interpreted as Time/Date/Null.",
+                column.name(),
+                type_name
+            )
+            .into(),
         ))
     }
+
 
     /// maps a MySQL-row into intermediate and DB-neutral ForgeUniversalDataField-Structure
     pub fn map_row_to_universal_values(
@@ -829,99 +863,105 @@ impl MySqlDriver {
                     source: e,
                 };
 
-                // clean NULL check beforehand
-                if row.try_get_raw(i).map(|v| v.is_null()).unwrap_or(true) {
-                    return Ok(ForgeUniversalDataField::Null);
-                }
 
                 let val = match type_name.as_str() {
-                    "DATETIME" | "TIMESTAMP" => self.handle_datetime(row, i).map_err(to_err)?,
+                    // we skip the null-check because these are handled in fumction
+                    "DATETIME" | "TIMESTAMP" | "DATE" | "TIME" => {
+                        self.handle_datetime_and_time(row, i).map_err(to_err)?
+                    }
 
-                    "DATE" => ForgeUniversalDataField::Date(
-                        row.try_get::<chrono::NaiveDate, _>(i).map_err(to_err)?,
-                    ),
+                    // for all other types we do the Standard-NULL-Check beforehand
+                    _ => {
+                        let raw = row.try_get_raw(i).map_err(to_err)?;
+                        if sqlx::ValueRef::is_null(&raw) {
+                            ForgeUniversalDataField::Null
+                        } else {
+                            match type_name.as_str() {
+                                "YEAR" => {
+                                    let year = match row.try_get::<u16, _>(i) {
+                                        Ok(val) => i32::from(val),
+                                        Err(_) => {
+                                            if let Ok(val) = row.try_get::<i16, _>(i) {
+                                                i32::from(val)
+                                            } else {
+                                                let raw =
+                                                    row.try_get::<String, _>(i).map_err(to_err)?;
+                                                raw.parse::<i32>().map_err(|_| {
+                                                    to_err(sqlx::Error::Decode(
+                                                        "Invalid YEAR value".into(),
+                                                    ))
+                                                })?
+                                            }
+                                        }
+                                    };
+                                    ForgeUniversalDataField::Year(year)
+                                }
 
-                    "TIME" => ForgeUniversalDataField::Time(
-                        row.try_get::<chrono::NaiveTime, _>(i).map_err(to_err)?,
-                    ),
+                                "TINYINT(1)" | "BOOLEAN" | "BOOL" => {
+                                    ForgeUniversalDataField::Boolean(
+                                        row.try_get::<bool, _>(i).map_err(to_err)?,
+                                    )
+                                }
 
-                    "YEAR" => {
-                        let year = match row.try_get::<u16, _>(i) {
-                            Ok(val) => i32::from(val),
-                            Err(_) => {
-                                if let Ok(val) = row.try_get::<i16, _>(i) {
-                                    i32::from(val)
-                                } else {
-                                    let raw = row.try_get::<String, _>(i).map_err(to_err)?;
-                                    raw.parse::<i32>().map_err(|_| {
-                                        to_err(sqlx::Error::Decode("Invalid YEAR value".into()))
-                                    })?
+                                "TINYINT" | "SMALLINT" | "INT" | "INTEGER" | "MEDIUMINT"
+                                | "BIGINT" | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED"
+                                | "INT UNSIGNED" | "BIGINT UNSIGNED" => {
+                                    let is_unsigned = type_name.contains("UNSIGNED");
+
+                                    if is_unsigned {
+                                        ForgeUniversalDataField::UnsignedInteger(
+                                            row.try_get::<u64, _>(i).map_err(to_err)?,
+                                        )
+                                    } else {
+                                        ForgeUniversalDataField::Integer(
+                                            row.try_get::<i64, _>(i).map_err(to_err)?,
+                                        )
+                                    }
+                                }
+
+                                "JSON" => ForgeUniversalDataField::Json(
+                                    row.try_get::<serde_json::Value, _>(i).map_err(to_err)?,
+                                ),
+
+                                "DOUBLE" | "FLOAT" => ForgeUniversalDataField::Float(
+                                    row.try_get::<f64, _>(i).map_err(to_err)?,
+                                ),
+
+                                "DECIMAL" => ForgeUniversalDataField::Decimal(
+                                    row.try_get::<rust_decimal::Decimal, _>(i).map_err(to_err)?,
+                                ),
+
+                                "BLOB" | "VARBINARY" | "BINARY" => ForgeUniversalDataField::Binary(
+                                    row.try_get::<Vec<u8>, _>(i).map_err(to_err)?,
+                                ),
+                                "BIT" => {
+                                    let v = row.try_get::<u64, _>(i).map_err(to_err)?;
+                                    ForgeUniversalDataField::Binary(v.to_be_bytes().to_vec())
+                                }
+
+                                // String-Fallback for VARCHAR, TEXT etc.
+                                "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT"
+                                | "LONGTEXT" | "ENUM" | "SET" => ForgeUniversalDataField::Text(
+                                    row.try_get::<String, _>(i).map_err(to_err)?,
+                                ),
+
+                                // Catch-All with error reporting for completely unknown types
+                                _ => {
+                                    return Err(ForgeError::UnsupportedMySQLType {
+                                        column: col_name.to_string(),
+                                        type_info: type_name.clone(),
+                                    });
                                 }
                             }
-                        };
-                        ForgeUniversalDataField::Year(year)
-                    }
-
-                    "TINYINT(1)" | "BOOLEAN" | "BOOL" => {
-                        ForgeUniversalDataField::Boolean(row.try_get::<bool, _>(i).map_err(to_err)?)
-                    }
-
-                    "TINYINT" | "SMALLINT" | "INT" | "INTEGER" | "MEDIUMINT" | "BIGINT"
-                    | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "INT UNSIGNED"
-                    | "BIGINT UNSIGNED" => {
-                        let is_unsigned = type_name.contains("UNSIGNED");
-
-                        if is_unsigned {
-                            ForgeUniversalDataField::UnsignedInteger(
-                                row.try_get::<u64, _>(i).map_err(to_err)?,
-                            )
-                        } else {
-                            ForgeUniversalDataField::Integer(
-                                row.try_get::<i64, _>(i).map_err(to_err)?,
-                            )
                         }
-                    }
-
-                    "JSON" => ForgeUniversalDataField::Json(
-                        row.try_get::<serde_json::Value, _>(i).map_err(to_err)?,
-                    ),
-
-                    "DOUBLE" | "FLOAT" => {
-                        ForgeUniversalDataField::Float(row.try_get::<f64, _>(i).map_err(to_err)?)
-                    }
-
-                    "DECIMAL" => ForgeUniversalDataField::Decimal(
-                        row.try_get::<rust_decimal::Decimal, _>(i).map_err(to_err)?,
-                    ),
-
-                    "BLOB" | "VARBINARY" | "BINARY" => ForgeUniversalDataField::Binary(
-                        row.try_get::<Vec<u8>, _>(i).map_err(to_err)?,
-                    ),
-                    "BIT" => {
-                        let v = row.try_get::<u64, _>(i).map_err(to_err)?;
-                        ForgeUniversalDataField::Binary(v.to_be_bytes().to_vec())
-                    }
-
-                    // String-Fallback for VARCHAR, TEXT etc.
-                    "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT"
-                    | "ENUM" | "SET" => {
-                        ForgeUniversalDataField::Text(row.try_get::<String, _>(i).map_err(to_err)?)
-                    }
-
-                    // Catch-All with error reporting for completely unknown types
-                    _ => {
-                        return Err(ForgeError::UnsupportedMySQLType {
-                            column: col_name.to_string(),
-                            type_info: type_name.clone(),
-                        });
                     }
                 };
 
                 Ok(val)
             })
-            .collect() // collects  Result<Vec<ForgeUniversalDataField>, ForgeError>
-    }
-}
+            .collect()
+    } // map_row_to_universal_values
+} // impl MySqlDriver
 
 #[async_trait]
 impl DatabaseDriver for MySqlDriver {

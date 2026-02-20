@@ -112,6 +112,7 @@ pub struct ForgeRulesDirectionConfig {
 pub struct ForgeRuleGeneralConfig {
     pub unsigned_int_to_bigint: Option<bool>,
     pub zero_date: Option<bool>,
+    pub sql_mode: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

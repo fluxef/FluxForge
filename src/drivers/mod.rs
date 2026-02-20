@@ -11,9 +11,13 @@ pub use mysql::MySqlDriver;
 pub use postgres::PostgresDriver;
 
 use crate::core::ForgeConfig;
+use crate::drivers::mysql::get_mysql_init_session_sql_mode;
 use crate::DatabaseDriver;
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
+use sqlx::ConnectOptions;
 use sqlx::{MySqlPool, PgPool};
 use std::error::Error;
+use std::str::FromStr;
 
 /// Creates a database driver from a connection URL.
 ///
@@ -36,13 +40,15 @@ use std::error::Error;
 /// // Create MySQL driver
 /// let mysql_driver = drivers::create_driver(
 ///     "mysql://root:password@localhost:3306/mydb",
-///     &config
+///     &config,
+///     true
 /// ).await?;
 ///
 /// // Create PostgreSQL driver
 /// let pg_driver = drivers::create_driver(
 ///     "postgres://postgres:password@localhost:5432/mydb",
-///     &config
+///     &config,
+///     true
 /// ).await?;
 /// # Ok(())
 /// # }
@@ -57,10 +63,9 @@ use std::error::Error;
 pub async fn create_driver(
     url: &str,
     config: &ForgeConfig,
+    is_source_driver: bool,
 ) -> Result<Box<dyn DatabaseDriver>, Box<dyn Error>> {
     if url.starts_with("mysql://") {
-        let pool = MySqlPool::connect(url).await?;
-
         let zero_date_on_write = config
             .mysql
             .as_ref()
@@ -69,11 +74,43 @@ pub async fn create_driver(
             .and_then(|w| w.zero_date)
             .unwrap_or(false); // default false, if not in config
 
-        Ok(Box::new(mysql::MySqlDriver {
-            pool,
-            zero_date_on_write,
-        }))
-    } else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+        let sql_mode = get_mysql_init_session_sql_mode(config, is_source_driver);
+
+        if sql_mode == "".to_string() {
+            let pool = MySqlPool::connect(url).await?;
+            let driver = MySqlDriver {
+                pool,
+                zero_date_on_write,
+            };
+            Ok(Box::new(driver))
+        } else {
+            let sql_command_for_hook = sql_mode.clone(); // copy for outer Closure
+
+            let opts = MySqlConnectOptions::from_str(url)?;
+
+            // create pool with options
+            let pool = MySqlPoolOptions::new()
+                .max_connections(5)
+                .after_connect(move |conn, _meta| {
+                    // IMPORTANT: wen need a new copy for every call which is then "moved" into the async block
+                    let cmd = sql_command_for_hook.clone();
+
+                    Box::pin(async move {
+                        sqlx::query(&cmd).execute(conn).await?;
+                        Ok(())
+                    })
+                })
+                .connect_with(opts)
+                .await?;
+            let driver = MySqlDriver {
+                pool,
+                zero_date_on_write,
+            };
+            Ok(Box::new(driver))
+        }
+    }
+    // if mysql
+    else if url.starts_with("postgres://") || url.starts_with("postgresql://") {
         let pool = PgPool::connect(url).await?;
         Ok(Box::new(postgres::PostgresDriver { pool: Some(pool) }))
     } else {

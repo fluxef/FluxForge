@@ -85,16 +85,16 @@ impl PostgresDriver {
     ) -> Result<Vec<ForgeSchemaColumn>, Box<dyn Error>> {
         let pool = self.pool.as_ref().ok_or("No database pool available")?;
         let sql = "
-            SELECT 
-                column_name, 
-                data_type, 
-                character_maximum_length, 
-                numeric_precision, 
-                numeric_scale, 
-                is_nullable, 
+            SELECT
+                column_name,
+                data_type,
+                character_maximum_length,
+                numeric_precision,
+                numeric_scale,
+                is_nullable,
                 column_default,
                 udt_name
-            FROM information_schema.columns 
+            FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = $1
             ORDER BY ordinal_position";
 
@@ -204,12 +204,12 @@ impl PostgresDriver {
         let pool = self.pool.as_ref().ok_or("No database pool available")?;
         let sql = "
             SELECT
-                tc.constraint_name, 
-                kcu.column_name, 
+                tc.constraint_name,
+                kcu.column_name,
                 ccu.table_name AS foreign_table_name,
-                ccu.column_name AS foreign_column_name 
-            FROM 
-                information_schema.table_constraints AS tc 
+                ccu.column_name AS foreign_column_name
+            FROM
+                information_schema.table_constraints AS tc
                 JOIN information_schema.key_column_usage AS kcu
                   ON tc.constraint_name = kcu.constraint_name
                   AND tc.table_schema = kcu.table_schema
@@ -282,15 +282,47 @@ impl PostgresDriver {
             // Arrays, integer/bigint/double precision/timestamp: no size/precision suffix
         }
 
-        if !field.is_nullable {
-            sql.push_str(" NOT NULL");
-        }
+        let time_date_force_nullable = true; // TODO from config.toml
 
+        // special logic for "NUT NULL" with time/date types (because of mysql ...)
+        let is_time_type = t.contains("timestamp") || t.contains("date") || t.contains("time");
+
+        // NULLABILITY LOGIC
+        // if it is a time-type we force NULL (allow NULL)
+        // because MySQL hides "0000-00-00" in NOT NULL columns
+        if is_time_type {
+            sql.push_str(" NULL"); // overwrites the NOT NULL from Source
+        } else if !field.is_nullable {
+            sql.push_str(" NOT NULL");
+        } else {
+            sql.push_str(" NULL");
+        }
+        // *****************************************************************
         // Do not carry over default nextval(...) from source; IDENTITY already covers it
         if !field.auto_increment
             && let Some(def) = &field.default
         {
-            sql.push_str(&format!(" DEFAULT {def}"));
+            let t = pg_type.to_lowercase();
+            let is_time_type = t.contains("timestamp") || t.contains("date") || t.contains("time");
+
+            let mut clean_def = def.clone();
+
+            if is_time_type {
+                // MySQL Zero-Dates to NULL
+                if def.contains("0000-00-00") || def == "0" || def == "'0'" {
+                    clean_def = "NULL".to_string();
+                }
+                // MySQL functions to Postgres functions
+                else if def.to_uppercase() == "CURRENT_TIMESTAMP" {
+                    clean_def = "CURRENT_TIMESTAMP".to_string(); // In PG without "
+                }
+                // fix missing " in literals (the ":" error)
+                else if def.contains(':') && !def.starts_with('\'') {
+                    clean_def = format!("'{}'", def);
+                }
+            }
+
+            sql.push_str(&format!(" DEFAULT {}", clean_def));
         }
 
         sql

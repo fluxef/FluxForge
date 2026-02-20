@@ -89,9 +89,11 @@ default_charset = "utf8mb4"
 
 [mysql.rules.on_read]
 unsigned_int_to_bigint = true
+sql_mode = ""
 
 [mysql.rules.on_write]
 zero_date = true
+sql_mode = ""
 
 # --- Postgres Sektion ---
 [postgres.types.on_read]
@@ -120,10 +122,10 @@ zero_date = true
         println!("Mysql Source URL: {source_url}");
         println!("Postgres Target URL: {target_url}");
 
-        let source_driver = drivers::create_driver(&source_url, &forge_config)
+        let source_driver = drivers::create_driver(&source_url, &forge_config, true)
             .await
             .expect("Error creating source driver");
-        let target_driver = drivers::create_driver(&target_url, &forge_config)
+        let target_driver = drivers::create_driver(&target_url, &forge_config, false)
             .await
             .expect("Error creating target driver");
 

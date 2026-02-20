@@ -54,11 +54,16 @@ mod tests {
     async fn test_mysql_to_mysql_replicate_with_verify() {
         let ctx = TestContext::setup().await;
 
-        let config_toml = r"
-# standard-file without mapping
+        let config_toml = r#"
+
+[mysql.rules.on_read]
+sql_mode = ""
+
 [mysql.rules.on_write]
 zero_date = true
-";
+sql_mode = ""
+
+"#;
 
         let forge_config: ForgeConfig =
             toml::from_str(config_toml).expect("Error parsing mysql mysql config");
@@ -70,10 +75,10 @@ zero_date = true
         println!("MySQL Source URL: {source_url}");
         println!("MySQL Target URL: {target_url}");
 
-        let source_driver = drivers::create_driver(&source_url, &forge_config)
+        let source_driver = drivers::create_driver(&source_url, &forge_config, true)
             .await
             .expect("Error creating source driver");
-        let target_driver = drivers::create_driver(&target_url, &forge_config)
+        let target_driver = drivers::create_driver(&target_url, &forge_config, false)
             .await
             .expect("Error creating target driver");
 

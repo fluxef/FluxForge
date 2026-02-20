@@ -21,6 +21,33 @@ pub struct MySqlDriver {
     pub zero_date_on_write: bool,
 }
 
+pub fn get_mysql_init_session_sql_mode(config: &ForgeConfig, is_source: bool) -> String {
+    // Determine which rules block to use based on role
+    let sql_mode_opt = if is_source {
+        config
+            .mysql
+            .as_ref()
+            .and_then(|m| m.rules.as_ref())
+            .and_then(|r| r.on_read.as_ref())
+            .and_then(|rr| rr.sql_mode.clone())
+    } else {
+        config
+            .mysql
+            .as_ref()
+            .and_then(|m| m.rules.as_ref())
+            .and_then(|r| r.on_write.as_ref())
+            .and_then(|rw| rw.sql_mode.clone())
+    };
+
+    if let Some(mode) = sql_mode_opt {
+        let escaped = mode.replace('"', "\\\"");
+        let stmt = format!("SET SQL_MODE = \"{}\"", escaped);
+        return stmt;
+    }
+
+    "".to_string()
+}
+
 impl MySqlDriver {
     // only visible in module, not part of public trait
 

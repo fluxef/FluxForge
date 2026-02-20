@@ -54,11 +54,16 @@ mod tests {
     async fn test_mysql_to_mysql_replicate_with_verify() {
         let ctx = TestContext::setup().await;
 
-        let config_toml = r"
-# standard-file without mapping
+        let config_toml = r#"
+
+[mysql.rules.on_read]
+sql_mode = ""
+
 [mysql.rules.on_write]
 zero_date = true
-";
+sql_mode = ""
+
+"#;
 
         let forge_config: ForgeConfig =
             toml::from_str(config_toml).expect("Error parsing mysql mysql config");

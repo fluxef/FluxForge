@@ -1,7 +1,11 @@
 # standard-file without mapping
 # only useful if source AND target are mysql
 
+[mysql.rules.on_read]
+sql_mode = ""
+
 [mysql.rules.on_write]
 zero_date = true
+sql_mode = ""
 
 # the end :-)

@@ -89,9 +89,11 @@ default_charset = "utf8mb4"
 
 [mysql.rules.on_read]
 unsigned_int_to_bigint = true
+sql_mode = ""
 
 [mysql.rules.on_write]
 zero_date = true
+sql_mode = ""
 
 # --- Postgres Sektion ---
 [postgres.types.on_read]

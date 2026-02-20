@@ -30,6 +30,7 @@ pub mod drivers;
 pub mod ops;
 
 // Re-export for easier access
+pub use crate::core::ForgeUniversalDataTransferPacket;
 pub use crate::core::{ForgeConfig, ForgeError};
 pub use crate::core::{ForgeSchema, ForgeSchemaColumn, ForgeSchemaTable};
 pub use crate::core::{ForgeUniversalDataField, ForgeUniversalDataRow};

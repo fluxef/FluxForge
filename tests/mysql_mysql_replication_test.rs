@@ -95,6 +95,7 @@ zero_date = true
             source_driver.as_ref(),
             target_driver.as_ref(),
             &source_schema,
+            None,
             false,
             false,
             false,

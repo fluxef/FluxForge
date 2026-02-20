@@ -919,7 +919,7 @@ impl MySqlDriver {
 
                 Ok(val)
             })
-            .collect() // Sammelt Result<Vec<ForgeUniversalDataField>, ForgeError>
+            .collect() // collects  Result<Vec<ForgeUniversalDataField>, ForgeError>
     }
 }
 

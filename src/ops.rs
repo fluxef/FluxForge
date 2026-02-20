@@ -6,6 +6,7 @@
 //! - Data verification after replication
 //! - Error logging for failed operations
 
+use crate::core::ForgeUniversalDataTransferPacket;
 use crate::{DatabaseDriver, ForgeSchema, ForgeSchemaTable, ForgeUniversalDataField};
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -14,6 +15,8 @@ use petgraph::graph::DiGraph;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
+use tokio::io::AsyncWriteExt;
 
 fn order_by_columns(table: &ForgeSchemaTable) -> Vec<String> {
     let primary_keys: Vec<String> = table
@@ -165,17 +168,20 @@ async fn verify_table_data(
 ///
 /// ```no_run
 /// use fluxforge::{ops, drivers, core::ForgeConfig};
+/// use std::path::PathBuf;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = ForgeConfig::default();
 /// let source = drivers::create_driver("mysql://user:pass@localhost/source", &config).await?;
 /// let target = drivers::create_driver("postgres://user:pass@localhost/target", &config).await?;
 /// let schema = source.fetch_schema(&config).await?;
+/// let dump: Option<PathBuf> = Some(PathBuf::from("data_dump.jsonl"));
 ///
 /// ops::replicate_data(
 ///     source.as_ref(),
 ///     target.as_ref(),
 ///     &schema,
+///     dump,
 ///     false, // dry_run
 ///     false, // verbose
 ///     true,  // halt_on_error
@@ -197,6 +203,7 @@ pub async fn replicate_data(
     source: &dyn DatabaseDriver,
     target: &dyn DatabaseDriver,
     schema: &ForgeSchema,
+    dump: Option<PathBuf>,
     dry_run: bool,
     _verbose: bool,
     halt_on_error: bool,
@@ -210,9 +217,14 @@ pub async fn replicate_data(
     )?
         .progress_chars("#>-");
 
-    // if verbose {
     println!("Starting data replication");
-    // }
+
+    let mut dump_writer = if let Some(path) = dump {
+        let file = tokio::fs::File::create(path).await?;
+        Some(tokio::io::BufWriter::new(file))
+    } else {
+        None
+    };
 
     for table in &schema.tables {
         let row_count = source.get_table_row_count(&table.name).await.unwrap_or(0);
@@ -226,6 +238,17 @@ pub async fn replicate_data(
 
         while let Some(row_result) = data_stream.next().await {
             let row = row_result?;
+
+            if let Some(ref mut writer) = dump_writer {
+                let packet = ForgeUniversalDataTransferPacket {
+                    t: table.name.clone(),
+                    r: row.clone(), // clone required, because row is going into the chunk
+                };
+                let json_data = serde_json::to_vec(&packet)?;
+                writer.write_all(&json_data).await?;
+                writer.write_all(b"\n").await?;
+            }
+
             chunk.push(row);
             total_rows += 1;
 
@@ -248,6 +271,11 @@ pub async fn replicate_data(
 
         pb.finish_with_message(format!("Done: {} ({} rows)", table.name, total_rows));
         println!("  {}", table.name);
+
+        // write buf to disk after every table.
+        if let Some(ref mut writer) = dump_writer {
+            writer.flush().await?;
+        }
 
         if verify_after_write && !dry_run {
             verify_table_data(source, target, table, &multi, &style).await?;

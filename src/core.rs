@@ -7,6 +7,7 @@
 //! - Error types for database operations
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use indexmap::IndexMap;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -344,7 +345,7 @@ pub struct ForgeSchemaForeignKey {
 /// let text_val = ForgeUniversalDataField::Text("hello".to_string());
 /// let null_val = ForgeUniversalDataField::Null;
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ForgeUniversalDataField {
     /// Signed 64-bit integer
     Integer(i64),
@@ -381,8 +382,15 @@ pub enum ForgeUniversalDataField {
 }
 
 /// Represents a Database row with Universal Data columns
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct ForgeUniversalDataRow {
     pub columns: Vec<ForgeUniversalDataField>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct ForgeUniversalDataTransferPacket {
+    pub t: String,                                    // table name
+    pub r: IndexMap<String, ForgeUniversalDataField>, //data row
 }
 
 /// Error types for FluxForge operations.
@@ -438,4 +446,102 @@ pub enum ForgeError {
     /// Indicates an unexpected internal state that should not occur during normal operation.
     #[error("General Internal Error: {0}")]
     Internal(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+    use rust_decimal::Decimal;
+    use serde_json::json;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_forge_universal_data_transfer_packet_serialization() {
+        let mut row = IndexMap::new();
+
+        row.insert("id".to_string(), ForgeUniversalDataField::Integer(1));
+        row.insert(
+            "uint".to_string(),
+            ForgeUniversalDataField::UnsignedInteger(100),
+        );
+        row.insert("float".to_string(), ForgeUniversalDataField::Float(47.11));
+        row.insert(
+            "text".to_string(),
+            ForgeUniversalDataField::Text("Hello FluxForge".to_string()),
+        );
+        row.insert(
+            "binary".to_string(),
+            ForgeUniversalDataField::Binary(vec![0xDE, 0xAD, 0xBE, 0xEF]),
+        );
+        row.insert("bool".to_string(), ForgeUniversalDataField::Boolean(true));
+        row.insert("year".to_string(), ForgeUniversalDataField::Year(2024));
+        row.insert(
+            "time".to_string(),
+            ForgeUniversalDataField::Time(NaiveTime::from_hms_opt(12, 34, 56).unwrap()),
+        );
+        row.insert(
+            "date".to_string(),
+            ForgeUniversalDataField::Date(NaiveDate::from_ymd_opt(2024, 2, 20).unwrap()),
+        );
+        row.insert(
+            "datetime".to_string(),
+            ForgeUniversalDataField::DateTime(
+                NaiveDateTime::parse_from_str("2024-02-20 12:34:56", "%Y-%m-%d %H:%M:%S").unwrap(),
+            ),
+        );
+        row.insert(
+            "decimal".to_string(),
+            ForgeUniversalDataField::Decimal(Decimal::new(12345, 2)),
+        );
+        row.insert(
+            "json".to_string(),
+            ForgeUniversalDataField::Json(json!({"key": "value", "list": [1, 2, 3]})),
+        );
+        row.insert(
+            "uuid".to_string(),
+            ForgeUniversalDataField::Uuid(
+                sqlx::types::Uuid::from_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
+            ),
+        );
+        row.insert(
+            "inet".to_string(),
+            ForgeUniversalDataField::Inet(
+                sqlx::types::ipnetwork::IpNetwork::from_str("192.168.1.1/24").unwrap(),
+            ),
+        );
+        row.insert("null_field".to_string(), ForgeUniversalDataField::Null);
+        row.insert("zero_dt".to_string(), ForgeUniversalDataField::ZeroDateTime);
+
+        let packet = ForgeUniversalDataTransferPacket {
+            t: "test_table".to_string(),
+            r: row,
+        };
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string(&packet).expect("Failed to serialize packet");
+        println!("Serialized: {}", serialized);
+
+        // Deserialize from JSON
+        let deserialized: ForgeUniversalDataTransferPacket =
+            serde_json::from_str(&serialized).expect("Failed to deserialize packet");
+
+        // Assert equality
+        assert_eq!(packet.t, deserialized.t);
+        assert_eq!(packet.r.len(), deserialized.r.len());
+
+        for (key, original_val) in &packet.r {
+            let deserialized_val = deserialized
+                .r
+                .get(key)
+                .expect("Key missing in deserialized");
+            assert_eq!(
+                original_val, deserialized_val,
+                "Value mismatch for key: {}",
+                key
+            );
+        }
+
+        assert_eq!(packet, deserialized);
+    }
 }

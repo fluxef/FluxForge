@@ -133,6 +133,7 @@ fluxforge replicate \
   --source "mysql://user:pass@localhost/source_db" \
   --target "postgres://user:pass@localhost/target_db" \
   --config mapping.toml \
+  --dump   data_dump.jsonl \
   --verify \
   --halt-on-error \
   --verbose

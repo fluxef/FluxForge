@@ -71,6 +71,10 @@ pub enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
 
+        /// Optional path for data dump of ForgeUniversalData as json
+        #[arg(long)]
+        dump: Option<PathBuf>,
+
         /// Output SQL statements without executing them
         #[arg(long)]
         dry_run: bool,

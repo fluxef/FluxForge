@@ -122,10 +122,10 @@ sql_mode = ""
         println!("Mysql Source URL: {source_url}");
         println!("Postgres Target URL: {target_url}");
 
-        let source_driver = drivers::create_driver(&source_url, &forge_config)
+        let source_driver = drivers::create_driver(&source_url, &forge_config, true)
             .await
             .expect("Error creating source driver");
-        let target_driver = drivers::create_driver(&target_url, &forge_config)
+        let target_driver = drivers::create_driver(&target_url, &forge_config, false)
             .await
             .expect("Error creating target driver");
 

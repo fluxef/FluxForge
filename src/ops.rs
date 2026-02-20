@@ -172,8 +172,8 @@ async fn verify_table_data(
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = ForgeConfig::default();
-/// let source = drivers::create_driver("mysql://user:pass@localhost/source", &config).await?;
-/// let target = drivers::create_driver("postgres://user:pass@localhost/target", &config).await?;
+/// let source = drivers::create_driver("mysql://user:pass@localhost/source", &config, true).await?;
+/// let target = drivers::create_driver("postgres://user:pass@localhost/target", &config, false).await?;
 /// let schema = source.fetch_schema(&config).await?;
 /// let dump: Option<PathBuf> = Some(PathBuf::from("data_dump.jsonl"));
 ///

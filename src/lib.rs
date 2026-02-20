@@ -17,7 +17,7 @@
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = ForgeConfig::default();
-//! let driver = drivers::create_driver("mysql://user:pass@localhost/db", &config).await?;
+//! let driver = drivers::create_driver("mysql://user:pass@localhost/db", &config, true).await?;
 //! let schema = driver.fetch_schema(&config).await?;
 //! println!("Extracted {} tables", schema.tables.len());
 //! # Ok(())
@@ -53,7 +53,7 @@ use std::pin::Pin;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = ForgeConfig::default();
-/// let driver = drivers::create_driver("postgres://user:pass@localhost/db", &config).await?;
+/// let driver = drivers::create_driver("postgres://user:pass@localhost/db", &config, true).await?;
 /// let is_empty = driver.db_is_empty().await?;
 /// println!("Database is empty: {}", is_empty);
 /// # Ok(())

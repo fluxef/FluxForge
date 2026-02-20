@@ -61,7 +61,8 @@ case "$1" in
     export MYSQL_URL_ADMIN="mysql://root:root@127.0.0.1:3306"
     export POSTGRES_URL_ADMIN="postgres://postgres:root@127.0.0.1:5432"
 
-    cargo test --features integration-tests -- --nocapture
+    # cargo test --features integration-tests -- --nocapture
+    cargo test --features integration-tests --
     ;;
 
   stop)
